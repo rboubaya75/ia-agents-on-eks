@@ -76,10 +76,14 @@ class InMemoryDynamoTable:
         scan_forward: bool = True,
     ) -> tuple[dict[str, object], ...]:
         del index_name
-        matching = [item for item in self.items.values() if item.get(key_name) == key_value]
+        matching = [
+            item for item in self.items.values() if item.get(key_name) == key_value
+        ]
         if len(self._key_fields) > 1:
             sort_field = self._key_fields[1]
-            matching.sort(key=lambda item: str(item[sort_field]), reverse=not scan_forward)
+            matching.sort(
+                key=lambda item: str(item[sort_field]), reverse=not scan_forward
+            )
         return tuple(self._read(item) for item in matching)
 
     async def ping(self) -> bool:
@@ -164,8 +168,12 @@ async def test_chat_session_round_trip_accepts_boto3_decimal_numbers() -> None:
     await repository.save(session)
 
     assert await repository.get(TenantId("tenant-a"), SessionId("session-a")) == session
-    assert await repository.list_for_user(TenantId("tenant-a"), UserId("user-a")) == (session,)
-    assert await repository.delete(TenantId("tenant-b"), SessionId("session-a")) is False
+    assert await repository.list_for_user(TenantId("tenant-a"), UserId("user-a")) == (
+        session,
+    )
+    assert (
+        await repository.delete(TenantId("tenant-b"), SessionId("session-a")) is False
+    )
     assert await repository.delete(TenantId("tenant-a"), SessionId("session-a")) is True
 
 
@@ -186,7 +194,9 @@ async def test_composite_keys_are_unambiguous_and_results_are_revalidated() -> N
     assert await repository.list_for_user(TenantId("a#b"), UserId("c")) == (first,)
     assert await repository.list_for_user(TenantId("a"), UserId("b#c")) == (second,)
 
-    first_item = next(item for item in table.items.values() if item["sessionId"] == "first")
+    first_item = next(
+        item for item in table.items.values() if item["sessionId"] == "first"
+    )
     first_item["tenantId"] = "other-tenant"
     assert await repository.list_for_user(TenantId("a#b"), UserId("c")) == ()
 
@@ -214,10 +224,15 @@ async def test_chat_messages_are_returned_in_chronological_order() -> None:
 
     await repository.append(later)
     await repository.append(earlier)
-    result = await repository.list_for_session(TenantId("tenant-a"), SessionId("session-a"))
+    result = await repository.list_for_session(
+        TenantId("tenant-a"), SessionId("session-a")
+    )
 
     assert result == (earlier, later)
-    assert await repository.list_for_session(TenantId("tenant-b"), SessionId("session-a")) == ()
+    assert (
+        await repository.list_for_session(TenantId("tenant-b"), SessionId("session-a"))
+        == ()
+    )
 
 
 @pytest.mark.asyncio
@@ -241,5 +256,7 @@ async def test_usage_record_round_trip_is_tenant_scoped() -> None:
 
     await repository.save(record)
 
-    assert await repository.list_for_user(TenantId("tenant-a"), UserId("user-a")) == (record,)
+    assert await repository.list_for_user(TenantId("tenant-a"), UserId("user-a")) == (
+        record,
+    )
     assert await repository.list_for_user(TenantId("tenant-b"), UserId("user-a")) == ()
