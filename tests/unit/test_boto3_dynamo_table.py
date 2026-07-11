@@ -10,6 +10,8 @@ class SyncTable:
         self.loaded = False
         self.fail_load = False
         self.last_call: tuple[str, dict[str, object]] | None = None
+        self.query_kwargs: list[dict[str, object]] = []
+        self.paginated = False
 
     def get_item(self, **kwargs: object) -> dict[str, object]:
         self.last_call = ("get", kwargs)
@@ -25,6 +27,14 @@ class SyncTable:
 
     def query(self, **kwargs: object) -> dict[str, object]:
         self.last_call = ("query", kwargs)
+        self.query_kwargs.append(kwargs)
+        if self.paginated and "ExclusiveStartKey" not in kwargs:
+            return {
+                "Items": [{"tenantId": "tenant-a", "page": 1}],
+                "LastEvaluatedKey": {"tenantId": "tenant-a", "cursor": "next"},
+            }
+        if self.paginated:
+            return {"Items": [{"tenantId": "tenant-a", "page": 2}]}
         return {"Items": [self.item] if self.item is not None else []}
 
     def load(self) -> None:
@@ -48,12 +58,31 @@ async def test_boto3_table_facade_wraps_blocking_operations() -> None:
     )
     assert await table.query_items(
         key_name="tenantUserKey",
-        key_value="tenant-a#user-a",
+        key_value="tenant-a-user-a",
         index_name="tenant-user-index",
         scan_forward=False,
     ) == ({"tenantId": "tenant-a"},)
     assert await table.ping() is True
     assert sync_table.loaded is True
+
+
+@pytest.mark.asyncio
+async def test_query_items_collects_all_dynamodb_pages() -> None:
+    sync_table = SyncTable()
+    sync_table.paginated = True
+    table = Boto3DynamoTable(sync_table)
+
+    result = await table.query_items(key_name="tenantId", key_value="tenant-a")
+
+    assert result == (
+        {"tenantId": "tenant-a", "page": 1},
+        {"tenantId": "tenant-a", "page": 2},
+    )
+    assert len(sync_table.query_kwargs) == 2
+    assert sync_table.query_kwargs[1]["ExclusiveStartKey"] == {
+        "tenantId": "tenant-a",
+        "cursor": "next",
+    }
 
 
 @pytest.mark.asyncio

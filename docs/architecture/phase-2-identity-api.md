@@ -2,7 +2,7 @@
 
 ## Implemented scope
 
-- Cognito access-token verification with JWKS caching and signing-key rotation support.
+- Cognito access-token verification with JWKS caching, signing-key rotation support and throttled refreshes for unknown key IDs.
 - Trusted `Principal` derived from verified claims only.
 - FastAPI application factory with normalized errors and correlation headers.
 - Health, identity, and chat-session endpoints.
@@ -19,10 +19,11 @@ The application factory reads these environment variables through `pydantic-sett
 - `IA_COGNITO_REQUIRED_SCOPES`.
 - `IA_USER_PROFILE_TABLE`.
 - `IA_CHAT_SESSION_TABLE`.
+- `IA_CHAT_SESSION_USER_INDEX`.
 - `IA_CHAT_MESSAGE_TABLE`.
 - `IA_USAGE_RECORD_TABLE`.
 
-No default AWS account ID, ARN, region, table name, secret, or user-pool ID is embedded in the code.
+No default AWS account ID, ARN, region, table name, index name, secret, or user-pool ID is embedded in the code.
 
 ## API authorization
 
@@ -34,10 +35,17 @@ No default AWS account ID, ARN, region, table name, secret, or user-pool ID is e
 
 The scope names are application configuration and will later be aligned with the Cognito resource-server Terraform module.
 
+## DynamoDB correctness rules
+
+- Composite tenant keys use length-prefixed encoding and repository outputs are revalidated.
+- Numeric values returned by boto3 are decoded from integral `Decimal` values.
+- Query pagination follows `LastEvaluatedKey` until the complete current repository result is collected.
+- Chat messages use `createdAtMessageKey` to preserve chronological order independently of random message IDs.
+
 ## Deferred within later phases
 
 - document APIs, ingestion, RAG, and S3 Vectors;
 - agent invocation and streaming chat messages;
 - Terraform and Helm resources;
-- pagination cursor signing and idempotency storage;
+- signed external pagination cursors and idempotency storage;
 - full OpenTelemetry exporters and structured production logging.

@@ -34,6 +34,26 @@ class StaticFetcher:
         return self.payload
 
 
+class SequenceFetcher:
+    def __init__(self, payloads: list[dict[str, object]]) -> None:
+        self._payloads = payloads
+        self.calls = 0
+
+    async def fetch(self, uri: str) -> dict[str, object]:
+        assert uri == f"{ISSUER}/.well-known/jwks.json"
+        index = min(self.calls, len(self._payloads) - 1)
+        self.calls += 1
+        return self._payloads[index]
+
+
+class MutableClock:
+    def __init__(self) -> None:
+        self.value = 0.0
+
+    def __call__(self) -> float:
+        return self.value
+
+
 @pytest.fixture(scope="module")
 def signing_material() -> Generator[tuple[RSAPrivateKey, dict[str, object]], None, None]:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -42,6 +62,14 @@ def signing_material() -> Generator[tuple[RSAPrivateKey, dict[str, object]], Non
     jwk["alg"] = "RS256"
     jwk["use"] = "sig"
     yield private_key, jwk
+
+
+def _jwk(private_key: RSAPrivateKey, kid: str) -> dict[str, object]:
+    value = cast(dict[str, object], json.loads(RSAAlgorithm.to_jwk(private_key.public_key())))
+    value["kid"] = kid
+    value["alg"] = "RS256"
+    value["use"] = "sig"
+    return value
 
 
 def _claims(**overrides: object) -> dict[str, object]:
@@ -162,13 +190,53 @@ async def test_rejects_missing_required_scope(
 
 
 @pytest.mark.asyncio
-async def test_rejects_unknown_signing_key(
+async def test_unknown_kids_are_negative_cached(
     signing_material: tuple[RSAPrivateKey, dict[str, object]],
 ) -> None:
     private_key, jwk = signing_material
     verifier, fetcher = _verifier(jwk)
 
     with pytest.raises(InvalidTokenError):
-        await verifier.verify(_token(private_key, _claims(), kid="rotated-key"))
+        await verifier.verify(_token(private_key, _claims(), kid="unknown-a"))
+    with pytest.raises(InvalidTokenError):
+        await verifier.verify(_token(private_key, _claims(), kid="unknown-b"))
 
     assert fetcher.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_new_signing_key_is_refreshed_after_minimum_interval(
+    signing_material: tuple[RSAPrivateKey, dict[str, object]],
+) -> None:
+    first_private_key, first_jwk = signing_material
+    second_private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    second_jwk = _jwk(second_private_key, "key-2")
+    fetcher = SequenceFetcher(
+        [
+            {"keys": [first_jwk]},
+            {"keys": [first_jwk, second_jwk]},
+        ]
+    )
+    clock = MutableClock()
+    settings = CognitoTokenVerifierSettings(issuer=ISSUER, client_id=CLIENT_ID)
+    verifier = CognitoTokenVerifier(
+        settings=settings,
+        jwk_provider=CachedJwkProvider(
+            jwks_uri=settings.jwks_uri,
+            fetcher=fetcher,
+            ttl_seconds=3600,
+            min_refresh_interval_seconds=60,
+            monotonic=clock,
+        ),
+    )
+
+    await verifier.verify(_token(first_private_key, _claims()))
+    with pytest.raises(InvalidTokenError):
+        await verifier.verify(_token(second_private_key, _claims(), kid="key-2"))
+    assert fetcher.calls == 1
+
+    clock.value = 61.0
+    principal = await verifier.verify(_token(second_private_key, _claims(), kid="key-2"))
+
+    assert principal.tenant_id == "tenant-a"
+    assert fetcher.calls == 2

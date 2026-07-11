@@ -16,5 +16,6 @@ class BackendSettings(BaseSettings):
     cognito_required_scopes: frozenset[str] = frozenset()
     user_profile_table: str = Field(min_length=1, max_length=255)
     chat_session_table: str = Field(min_length=1, max_length=255)
+    chat_session_user_index: str = Field(min_length=1, max_length=255)
     chat_message_table: str = Field(min_length=1, max_length=255)
     usage_record_table: str = Field(min_length=1, max_length=255)

@@ -79,10 +79,14 @@ class CachedJwkProvider:
         jwks_uri: str,
         fetcher: JwkSetFetcher,
         ttl_seconds: int = 3600,
+        min_refresh_interval_seconds: int = 60,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         if ttl_seconds <= 0:
             msg = "ttl_seconds must be positive"
+            raise ValueError(msg)
+        if min_refresh_interval_seconds <= 0:
+            msg = "min_refresh_interval_seconds must be positive"
             raise ValueError(msg)
         parsed = urlparse(jwks_uri)
         if parsed.scheme != "https" or not parsed.netloc:
@@ -91,20 +95,30 @@ class CachedJwkProvider:
         self._jwks_uri = jwks_uri
         self._fetcher = fetcher
         self._ttl_seconds = ttl_seconds
+        self._min_refresh_interval_seconds = min_refresh_interval_seconds
         self._monotonic = monotonic
         self._keys: dict[str, JsonObject] = {}
         self._expires_at = 0.0
+        self._last_refresh_at = float("-inf")
         self._lock = asyncio.Lock()
 
     async def get_key(self, kid: str) -> JsonObject | None:
         if not kid:
             return None
         now = self._monotonic()
-        if now < self._expires_at and kid in self._keys:
-            return self._keys[kid]
+        cached_key = self._keys.get(kid)
+        if now < self._expires_at and cached_key is not None:
+            return cached_key
         async with self._lock:
             now = self._monotonic()
-            if now >= self._expires_at or kid not in self._keys:
+            cached_key = self._keys.get(kid)
+            if now < self._expires_at and cached_key is not None:
+                return cached_key
+            cache_expired = now >= self._expires_at
+            refresh_interval_elapsed = (
+                now - self._last_refresh_at >= self._min_refresh_interval_seconds
+            )
+            if cache_expired or refresh_interval_elapsed:
                 await self._refresh(now)
             return self._keys.get(kid)
 
@@ -130,6 +144,7 @@ class CachedJwkProvider:
             raise InvalidTokenError(msg)
         self._keys = parsed_keys
         self._expires_at = now + self._ttl_seconds
+        self._last_refresh_at = now
 
 
 class CognitoTokenVerifier:

@@ -42,6 +42,7 @@ def test_environment_factory_wires_cognito_and_dynamodb(monkeypatch: pytest.Monk
     monkeypatch.setenv("IA_COGNITO_CLIENT_ID", "client-123")
     monkeypatch.setenv("IA_USER_PROFILE_TABLE", "profiles")
     monkeypatch.setenv("IA_CHAT_SESSION_TABLE", "sessions")
+    monkeypatch.setenv("IA_CHAT_SESSION_USER_INDEX", "tenant-user-index")
     monkeypatch.setenv("IA_CHAT_MESSAGE_TABLE", "messages")
     monkeypatch.setenv("IA_USAGE_RECORD_TABLE", "usage")
     table = ReadyTable()

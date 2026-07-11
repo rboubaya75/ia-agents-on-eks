@@ -41,7 +41,10 @@ def create_application() -> FastAPI:
     return create_app(
         AppContainer(
             token_verifier=token_verifier,
-            chat_sessions=DynamoChatSessionRepository(session_table),
+            chat_sessions=DynamoChatSessionRepository(
+                session_table,
+                user_index_name=settings.chat_session_user_index,
+            ),
             readiness=DynamoReadinessProbe(session_table),
         )
     )

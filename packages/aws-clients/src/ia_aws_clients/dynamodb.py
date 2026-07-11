@@ -1,6 +1,6 @@
 import asyncio
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Protocol, cast
@@ -119,9 +119,17 @@ class Boto3DynamoTable:
         }
         if index_name is not None:
             kwargs["IndexName"] = index_name
-        response = await asyncio.to_thread(self._table.query, **kwargs)
-        items = response.get("Items", [])
-        return tuple(cast(Sequence[DynamoItem], items))
+
+        items: list[DynamoItem] = []
+        while True:
+            response = await asyncio.to_thread(self._table.query, **kwargs)
+            page_items = response.get("Items", [])
+            items.extend(cast(Sequence[DynamoItem], page_items))
+            last_evaluated_key = response.get("LastEvaluatedKey")
+            if not isinstance(last_evaluated_key, dict) or not last_evaluated_key:
+                break
+            kwargs["ExclusiveStartKey"] = last_evaluated_key
+        return tuple(items)
 
     async def ping(self) -> bool:
         try:
@@ -158,7 +166,11 @@ def _datetime(value: object) -> datetime:
     if not isinstance(value, str):
         msg = "stored timestamp must be an ISO-8601 string"
         raise ValueError(msg)
-    return datetime.fromisoformat(value)
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        msg = "stored timestamp must include a timezone"
+        raise ValueError(msg)
+    return parsed
 
 
 def _string(value: object, field_name: str) -> str:
@@ -169,10 +181,32 @@ def _string(value: object, field_name: str) -> str:
 
 
 def _int(value: object, field_name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+    if isinstance(value, bool):
         msg = f"stored field must be an integer: {field_name}"
         raise ValueError(msg)
-    return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, Decimal) and value == value.to_integral_value():
+        return int(value)
+    msg = f"stored field must be an integer: {field_name}"
+    raise ValueError(msg)
+
+
+def _composite_key(*parts: str) -> str:
+    if not parts or any(not part for part in parts):
+        msg = "composite key parts must not be empty"
+        raise ValueError(msg)
+    return "".join(f"{len(part)}:{part}" for part in parts)
+
+
+def _chronological_key(timestamp: datetime, unique_id: str) -> str:
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+        msg = "timestamp must include a timezone"
+        raise ValueError(msg)
+    utc_timestamp = timestamp.astimezone(UTC).isoformat(timespec="microseconds").replace(
+        "+00:00", "Z"
+    )
+    return f"{utc_timestamp}#{unique_id}"
 
 
 class DynamoUserProfileRepository(UserProfileRepository):
@@ -199,7 +233,7 @@ class DynamoUserProfileRepository(UserProfileRepository):
         item = await self._table.get_item({"tenantId": str(tenant_id), "userId": str(user_id)})
         if item is None:
             return None
-        return UserProfile(
+        profile = UserProfile(
             tenant_id=TenantId(_string(item.get("tenantId"), "tenantId")),
             user_id=UserId(_string(item.get("userId"), "userId")),
             email=_string(item.get("email"), "email"),
@@ -209,15 +243,16 @@ class DynamoUserProfileRepository(UserProfileRepository):
             created_at=_datetime(item.get("createdAt")),
             updated_at=_datetime(item.get("updatedAt")),
         )
+        if profile.tenant_id != tenant_id or profile.user_id != user_id:
+            return None
+        return profile
 
 
 class DynamoChatSessionRepository(ChatSessionCommandRepository):
-    def __init__(
-        self,
-        table: DynamoTable,
-        *,
-        user_index_name: str = "tenant-user-last-activity-index",
-    ) -> None:
+    def __init__(self, table: DynamoTable, *, user_index_name: str) -> None:
+        if not user_index_name:
+            msg = "user_index_name must not be empty"
+            raise ValueError(msg)
         self._table = table
         self._user_index_name = user_index_name
 
@@ -227,7 +262,9 @@ class DynamoChatSessionRepository(ChatSessionCommandRepository):
                 {
                     "tenantId": str(session.tenant_id),
                     "sessionId": str(session.session_id),
-                    "tenantUserKey": f"{session.tenant_id}#{session.user_id}",
+                    "tenantUserKey": _composite_key(
+                        str(session.tenant_id), str(session.user_id)
+                    ),
                     "userId": str(session.user_id),
                     "status": session.status,
                     "title": session.title,
@@ -243,22 +280,36 @@ class DynamoChatSessionRepository(ChatSessionCommandRepository):
         item = await self._table.get_item(
             {"tenantId": str(tenant_id), "sessionId": str(session_id)}
         )
-        return None if item is None else self._decode(item)
+        if item is None:
+            return None
+        session = self._decode(item)
+        if session.tenant_id != tenant_id or session.session_id != session_id:
+            return None
+        return session
 
     async def list_for_user(self, tenant_id: TenantId, user_id: UserId) -> tuple[ChatSession, ...]:
         items = await self._table.query_items(
             key_name="tenantUserKey",
-            key_value=f"{tenant_id}#{user_id}",
+            key_value=_composite_key(str(tenant_id), str(user_id)),
             index_name=self._user_index_name,
             scan_forward=False,
         )
-        return tuple(self._decode(item) for item in items)
+        sessions = tuple(self._decode(item) for item in items)
+        return tuple(
+            session
+            for session in sessions
+            if session.tenant_id == tenant_id and session.user_id == user_id
+        )
 
     async def delete(self, tenant_id: TenantId, session_id: SessionId) -> bool:
         deleted = await self._table.delete_item(
             {"tenantId": str(tenant_id), "sessionId": str(session_id)}
         )
-        return deleted is not None
+        if deleted is None:
+            return False
+        deleted_tenant = deleted.get("tenantId")
+        deleted_session = deleted.get("sessionId")
+        return deleted_tenant == str(tenant_id) and deleted_session == str(session_id)
 
     @staticmethod
     def _decode(item: Mapping[str, DynamoValue]) -> ChatSession:
@@ -295,7 +346,12 @@ class DynamoChatMessageRepository(ChatMessageRepository):
         await self._table.put_item(
             _encode_item(
                 {
-                    "tenantSessionKey": f"{message.tenant_id}#{message.session_id}",
+                    "tenantSessionKey": _composite_key(
+                        str(message.tenant_id), str(message.session_id)
+                    ),
+                    "createdAtMessageKey": _chronological_key(
+                        message.created_at, str(message.message_id)
+                    ),
                     "messageId": str(message.message_id),
                     "tenantId": str(message.tenant_id),
                     "sessionId": str(message.session_id),
@@ -319,9 +375,14 @@ class DynamoChatMessageRepository(ChatMessageRepository):
     ) -> tuple[ChatMessage, ...]:
         items = await self._table.query_items(
             key_name="tenantSessionKey",
-            key_value=f"{tenant_id}#{session_id}",
+            key_value=_composite_key(str(tenant_id), str(session_id)),
         )
-        return tuple(self._decode(item) for item in items)
+        messages = tuple(self._decode(item) for item in items)
+        return tuple(
+            message
+            for message in messages
+            if message.tenant_id == tenant_id and message.session_id == session_id
+        )
 
     @staticmethod
     def _decode(item: Mapping[str, DynamoValue]) -> ChatMessage:
@@ -364,8 +425,10 @@ class DynamoUsageRecordRepository(UsageRecordRepository):
         await self._table.put_item(
             _encode_item(
                 {
-                    "tenantUserKey": f"{record.tenant_id}#{record.user_id}",
-                    "timestampRequestKey": f"{record.timestamp.isoformat()}#{record.request_id}",
+                    "tenantUserKey": _composite_key(str(record.tenant_id), str(record.user_id)),
+                    "timestampRequestKey": _chronological_key(
+                        record.timestamp, str(record.request_id)
+                    ),
                     "tenantId": str(record.tenant_id),
                     "userId": str(record.user_id),
                     "requestId": str(record.request_id),
@@ -385,10 +448,15 @@ class DynamoUsageRecordRepository(UsageRecordRepository):
     async def list_for_user(self, tenant_id: TenantId, user_id: UserId) -> tuple[UsageRecord, ...]:
         items = await self._table.query_items(
             key_name="tenantUserKey",
-            key_value=f"{tenant_id}#{user_id}",
+            key_value=_composite_key(str(tenant_id), str(user_id)),
             scan_forward=False,
         )
-        return tuple(self._decode(item) for item in items)
+        records = tuple(self._decode(item) for item in items)
+        return tuple(
+            record
+            for record in records
+            if record.tenant_id == tenant_id and record.user_id == user_id
+        )
 
     @staticmethod
     def _decode(item: Mapping[str, DynamoValue]) -> UsageRecord:
