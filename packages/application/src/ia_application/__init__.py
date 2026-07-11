@@ -1,6 +1,7 @@
 from ia_application.ports import (
     AgentRuntimeClient,
     ChatMessageRepository,
+    ChatSessionCommandRepository,
     ChatSessionRepository,
     ChunkStore,
     EmbeddingProvider,
@@ -22,6 +23,7 @@ from ia_application.ports import (
 __all__ = [
     "AgentRuntimeClient",
     "ChatMessageRepository",
+    "ChatSessionCommandRepository",
     "ChatSessionRepository",
     "ChunkStore",
     "EmbeddingProvider",

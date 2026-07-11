@@ -6,7 +6,12 @@ build-backend = "hatchling.build"
 name = "ia-security"
 version = "0.1.0"
 requires-python = ">=3.12,<3.13"
-dependencies = ["ia-domain", "pydantic==2.13.4"]
+dependencies = [
+  "httpx==0.28.1",
+  "ia-domain",
+  "PyJWT[crypto]==2.13.0",
+  "pydantic==2.13.4",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ia_security"]

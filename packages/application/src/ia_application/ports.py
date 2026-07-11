@@ -128,6 +128,11 @@ class ChatSessionRepository(Protocol):
 
 
 @runtime_checkable
+class ChatSessionCommandRepository(ChatSessionRepository, Protocol):
+    async def delete(self, tenant_id: TenantId, session_id: SessionId) -> bool: ...
+
+
+@runtime_checkable
 class ChatMessageRepository(Protocol):
     async def append(self, message: ChatMessage) -> None: ...
 
