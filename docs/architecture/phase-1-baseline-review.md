@@ -1,19 +1,22 @@
 # Phase 1 repository baseline review
 
-## Finding
+## Initial finding
 
-The repository baseline contains inherited AWS workshop files at the root and under `home/` and `modules/`. They are unrelated to the target platform architecture. The inherited `backend_override.tf` also contains a hardcoded Terraform state bucket and region, which violates the target project's configuration rules.
+The repository baseline contained inherited AWS workshop files at the root and under `home/` and `modules/`. They were unrelated to the target platform architecture. The inherited `backend_override.tf` also contained a hardcoded Terraform state bucket and region, which violated the target project's configuration rules.
 
-## Phase 1 treatment
+## Resolution
 
-These files are not modified or silently deleted in Phase 1. Ruff, mypy and pytest are scoped to the new application packages and tests. This scope is explicit rather than an assertion that the whole inherited repository is compliant.
+With explicit project-owner approval, the inherited workshop content was removed from `feature/phase-1-foundation` in commit `947d35c8cc2a952a6cf279eee7dd672ca2e72030`.
 
-## Required decision before infrastructure work
+The cleanup removed:
 
-Choose one of the following before Phase 6:
+- the complete `home/` workshop tree;
+- the complete legacy `modules/` tree;
+- the root Terraform files inherited from the workshop;
+- the inherited Terraform lock file and backend override.
 
-1. remove the inherited workshop content after confirming it is no longer needed;
-2. move it into a clearly isolated archival repository;
-3. reset the target repository to the clean platform baseline.
+The branch now contains only the Phase 1 platform foundation and its supporting documentation, tests and GitHub Actions workflow.
 
-No Terraform from the inherited workshop content may be deployed as part of this platform.
+## Guardrail
+
+No Terraform from the removed workshop content may be restored or deployed as part of this platform. Future infrastructure must be implemented under `infra/terraform/` using the project architecture, least-privilege IAM, configurable regions and remote-state settings without hardcoded AWS identifiers.
