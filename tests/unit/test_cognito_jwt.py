@@ -55,13 +55,9 @@ class MutableClock:
 
 
 @pytest.fixture(scope="module")
-def signing_material() -> Generator[
-    tuple[RSAPrivateKey, dict[str, object]], None, None
-]:
+def signing_material() -> Generator[tuple[RSAPrivateKey, dict[str, object]], None, None]:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    jwk = cast(
-        dict[str, object], json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
-    )
+    jwk = cast(dict[str, object], json.loads(RSAAlgorithm.to_jwk(private_key.public_key())))
     jwk["kid"] = KID
     jwk["alg"] = "RS256"
     jwk["use"] = "sig"
@@ -69,9 +65,7 @@ def signing_material() -> Generator[
 
 
 def _jwk(private_key: RSAPrivateKey, kid: str) -> dict[str, object]:
-    value = cast(
-        dict[str, object], json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
-    )
+    value = cast(dict[str, object], json.loads(RSAAlgorithm.to_jwk(private_key.public_key())))
     value["kid"] = kid
     value["alg"] = "RS256"
     value["use"] = "sig"
@@ -97,9 +91,7 @@ def _claims(**overrides: object) -> dict[str, object]:
     return claims
 
 
-def _token(
-    private_key: RSAPrivateKey, claims: dict[str, object], *, kid: str = KID
-) -> str:
+def _token(private_key: RSAPrivateKey, claims: dict[str, object], *, kid: str = KID) -> str:
     return jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": kid})
 
 
@@ -125,9 +117,7 @@ async def test_verifies_cognito_access_token_and_derives_principal(
     signing_material: tuple[RSAPrivateKey, dict[str, object]],
 ) -> None:
     private_key, jwk = signing_material
-    verifier, fetcher = _verifier(
-        jwk, required_scopes=frozenset({"platform/profile.read"})
-    )
+    verifier, fetcher = _verifier(jwk, required_scopes=frozenset({"platform/profile.read"}))
 
     principal = await verifier.verify(_token(private_key, _claims()))
 
@@ -246,9 +236,7 @@ async def test_new_signing_key_is_refreshed_after_minimum_interval(
     assert fetcher.calls == 1
 
     clock.value = 61.0
-    principal = await verifier.verify(
-        _token(second_private_key, _claims(), kid="key-2")
-    )
+    principal = await verifier.verify(_token(second_private_key, _claims(), kid="key-2"))
 
     assert principal.tenant_id == "tenant-a"
     assert fetcher.calls == 2

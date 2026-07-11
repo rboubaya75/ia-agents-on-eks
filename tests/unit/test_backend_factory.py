@@ -34,9 +34,7 @@ class ReadyTable:
         return True
 
 
-def test_environment_factory_wires_cognito_and_dynamodb(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_environment_factory_wires_cognito_and_dynamodb(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(
         "IA_COGNITO_ISSUER",
         "https://cognito-idp.eu-west-3.amazonaws.com/eu-west-3_example",
@@ -59,9 +57,7 @@ def test_environment_factory_wires_cognito_and_dynamodb(
         assert table_name == "sessions"
         return cast(Boto3DynamoTable, table)
 
-    monkeypatch.setattr(
-        Boto3DynamoTable, "from_table_name", classmethod(from_table_name)
-    )
+    monkeypatch.setattr(Boto3DynamoTable, "from_table_name", classmethod(from_table_name))
 
     client = TestClient(create_application())
 

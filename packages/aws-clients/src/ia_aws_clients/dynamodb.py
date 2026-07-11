@@ -51,9 +51,7 @@ class DynamoTable(Protocol):
 
     async def put_item(self, item: Mapping[str, DynamoValue]) -> None: ...
 
-    async def delete_item(
-        self, key: Mapping[str, DynamoValue]
-    ) -> DynamoItem | None: ...
+    async def delete_item(self, key: Mapping[str, DynamoValue]) -> DynamoItem | None: ...
 
     async def query_items(
         self,
@@ -206,9 +204,7 @@ def _chronological_key(timestamp: datetime, unique_id: str) -> str:
         msg = "timestamp must include a timezone"
         raise ValueError(msg)
     utc_timestamp = (
-        timestamp.astimezone(UTC)
-        .isoformat(timespec="microseconds")
-        .replace("+00:00", "Z")
+        timestamp.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
     )
     return f"{utc_timestamp}#{unique_id}"
 
@@ -234,9 +230,7 @@ class DynamoUserProfileRepository(UserProfileRepository):
         )
 
     async def get(self, tenant_id: TenantId, user_id: UserId) -> UserProfile | None:
-        item = await self._table.get_item(
-            {"tenantId": str(tenant_id), "userId": str(user_id)}
-        )
+        item = await self._table.get_item({"tenantId": str(tenant_id), "userId": str(user_id)})
         if item is None:
             return None
         profile = UserProfile(
@@ -244,9 +238,7 @@ class DynamoUserProfileRepository(UserProfileRepository):
             user_id=UserId(_string(item.get("userId"), "userId")),
             email=_string(item.get("email"), "email"),
             display_name=_string(item.get("displayName"), "displayName"),
-            roles=frozenset(
-                Role(value) for value in cast(list[str], item.get("roles", []))
-            ),
+            roles=frozenset(Role(value) for value in cast(list[str], item.get("roles", []))),
             preferences=cast(dict[str, str], item.get("preferences", {})),
             created_at=_datetime(item.get("createdAt")),
             updated_at=_datetime(item.get("updatedAt")),
@@ -270,9 +262,7 @@ class DynamoChatSessionRepository(ChatSessionCommandRepository):
                 {
                     "tenantId": str(session.tenant_id),
                     "sessionId": str(session.session_id),
-                    "tenantUserKey": _composite_key(
-                        str(session.tenant_id), str(session.user_id)
-                    ),
+                    "tenantUserKey": _composite_key(str(session.tenant_id), str(session.user_id)),
                     "userId": str(session.user_id),
                     "status": session.status,
                     "title": session.title,
@@ -284,9 +274,7 @@ class DynamoChatSessionRepository(ChatSessionCommandRepository):
             )
         )
 
-    async def get(
-        self, tenant_id: TenantId, session_id: SessionId
-    ) -> ChatSession | None:
+    async def get(self, tenant_id: TenantId, session_id: SessionId) -> ChatSession | None:
         item = await self._table.get_item(
             {"tenantId": str(tenant_id), "sessionId": str(session_id)}
         )
@@ -297,9 +285,7 @@ class DynamoChatSessionRepository(ChatSessionCommandRepository):
             return None
         return session
 
-    async def list_for_user(
-        self, tenant_id: TenantId, user_id: UserId
-    ) -> tuple[ChatSession, ...]:
+    async def list_for_user(self, tenant_id: TenantId, user_id: UserId) -> tuple[ChatSession, ...]:
         items = await self._table.query_items(
             key_name="tenantUserKey",
             key_value=_composite_key(str(tenant_id), str(user_id)),
@@ -437,9 +423,7 @@ class DynamoUsageRecordRepository(UsageRecordRepository):
         await self._table.put_item(
             _encode_item(
                 {
-                    "tenantUserKey": _composite_key(
-                        str(record.tenant_id), str(record.user_id)
-                    ),
+                    "tenantUserKey": _composite_key(str(record.tenant_id), str(record.user_id)),
                     "timestampRequestKey": _chronological_key(
                         record.timestamp, str(record.request_id)
                     ),
@@ -459,9 +443,7 @@ class DynamoUsageRecordRepository(UsageRecordRepository):
             )
         )
 
-    async def list_for_user(
-        self, tenant_id: TenantId, user_id: UserId
-    ) -> tuple[UsageRecord, ...]:
+    async def list_for_user(self, tenant_id: TenantId, user_id: UserId) -> tuple[UsageRecord, ...]:
         items = await self._table.query_items(
             key_name="tenantUserKey",
             key_value=_composite_key(str(tenant_id), str(user_id)),

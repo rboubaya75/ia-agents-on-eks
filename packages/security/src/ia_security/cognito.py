@@ -37,12 +37,7 @@ class CognitoTokenVerifierSettings(BaseModel):
     @classmethod
     def validate_issuer(cls, value: str) -> str:
         parsed = urlparse(value)
-        if (
-            parsed.scheme != "https"
-            or not parsed.netloc
-            or parsed.query
-            or parsed.fragment
-        ):
+        if parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment:
             msg = "issuer must be an HTTPS origin without query or fragment"
             raise ValueError(msg)
         return value.rstrip("/")
@@ -183,9 +178,7 @@ class CognitoTokenVerifier:
             msg = "access token signing key is unknown"
             raise InvalidTokenError(msg)
         try:
-            public_key = cast(
-                RSAPublicKey, RSAAlgorithm.from_jwk(json.dumps(dict(jwk)))
-            )
+            public_key = cast(RSAPublicKey, RSAAlgorithm.from_jwk(json.dumps(dict(jwk))))
             claims = jwt.decode(
                 access_token,
                 key=public_key,
@@ -268,9 +261,7 @@ class CognitoTokenVerifier:
             return frozenset()
         known_roles = {role.value: role for role in Role}
         return frozenset(
-            known_roles[group]
-            for group in value
-            if isinstance(group, str) and group in known_roles
+            known_roles[group] for group in value if isinstance(group, str) and group in known_roles
         )
 
     @staticmethod
