@@ -7,6 +7,7 @@ dependencies = [
   "ia-agent-contracts",
   "ia-application",
   "ia-aws-clients",
+  "ia-backend-api",
   "ia-domain",
   "ia-observability",
   "ia-security",
@@ -26,12 +27,13 @@ dev = [
 package = false
 
 [tool.uv.workspace]
-members = ["packages/*"]
+members = ["packages/*", "apps/backend-api"]
 
 [tool.uv.sources]
 ia-agent-contracts = { workspace = true }
 ia-application = { workspace = true }
 ia-aws-clients = { workspace = true }
+ia-backend-api = { workspace = true }
 ia-domain = { workspace = true }
 ia-observability = { workspace = true }
 ia-security = { workspace = true }
@@ -40,8 +42,7 @@ ia-test-support = { workspace = true }
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["packages", "tests"]
-exclude = ["home", "modules"]
+src = ["packages", "apps", "tests"]
 
 [tool.ruff.lint]
 select = [
@@ -81,12 +82,12 @@ files = [
   "packages/observability/src",
   "packages/test-support/src",
   "packages/aws-clients/src",
+  "apps/backend-api/src",
   "tests",
 ]
-exclude = "^(home|modules)/"
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers --cov=ia_domain --cov=ia_application --cov=ia_agent_contracts --cov=ia_security --cov=ia_observability --cov=test_support --cov-report=term-missing --cov-fail-under=85"
+addopts = "--strict-config --strict-markers --cov=ia_domain --cov=ia_application --cov=ia_agent_contracts --cov=ia_security --cov=ia_observability --cov=test_support --cov=ia_aws_clients --cov=ia_backend_api --cov-report=term-missing --cov-fail-under=85"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
@@ -99,6 +100,8 @@ source = [
   "ia_security",
   "ia_observability",
   "test_support",
+  "ia_aws_clients",
+  "ia_backend_api",
 ]
 
 [tool.coverage.report]

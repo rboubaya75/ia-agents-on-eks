@@ -34,10 +34,10 @@ jobs:
         run: uv sync
 
       - name: Ruff lint
-        run: uv run ruff check packages tests
+        run: uv run ruff check packages apps tests
 
       - name: Ruff format check
-        run: uv run ruff format --check packages tests
+        run: uv run ruff format --check packages apps tests
 
       - name: Mypy strict
         run: uv run mypy

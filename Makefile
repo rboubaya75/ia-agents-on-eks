@@ -4,13 +4,13 @@ install:
 	uv sync
 
 lint:
-	uv run ruff check packages tests
+	uv run ruff check packages apps tests
 
 format:
-	uv run ruff format packages tests
+	uv run ruff format packages apps tests
 
 format-check:
-	uv run ruff format --check packages tests
+	uv run ruff format --check packages apps tests
 
 typecheck:
 	uv run mypy
