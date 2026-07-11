@@ -1,0 +1,106 @@
+[project]
+name = "ia-agents-on-eks"
+version = "0.1.0"
+description = "Production-grade custom agentic AI platform foundation"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "ia-agent-contracts",
+  "ia-application",
+  "ia-aws-clients",
+  "ia-domain",
+  "ia-observability",
+  "ia-security",
+  "ia-test-support",
+]
+
+[dependency-groups]
+dev = [
+  "mypy==2.2.0",
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "pytest-cov==7.1.0",
+  "ruff==0.15.21",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+ia-agent-contracts = { workspace = true }
+ia-application = { workspace = true }
+ia-aws-clients = { workspace = true }
+ia-domain = { workspace = true }
+ia-observability = { workspace = true }
+ia-security = { workspace = true }
+ia-test-support = { workspace = true }
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["packages", "tests"]
+exclude = ["home", "modules"]
+
+[tool.ruff.lint]
+select = [
+  "ANN",
+  "ASYNC",
+  "B",
+  "E",
+  "F",
+  "I",
+  "N",
+  "RUF",
+  "S",
+  "SIM",
+  "UP",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+show_error_codes = true
+pretty = true
+plugins = ["pydantic.mypy"]
+files = [
+  "packages/domain/src",
+  "packages/application/src",
+  "packages/agent-contracts/src",
+  "packages/security/src",
+  "packages/observability/src",
+  "packages/test-support/src",
+  "packages/aws-clients/src",
+  "tests",
+]
+exclude = "^(home|modules)/"
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers --cov=ia_domain --cov=ia_application --cov=ia_agent_contracts --cov=ia_security --cov=ia_observability --cov=test_support --cov-report=term-missing --cov-fail-under=85"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = [
+  "ia_domain",
+  "ia_application",
+  "ia_agent_contracts",
+  "ia_security",
+  "ia_observability",
+  "test_support",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

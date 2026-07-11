@@ -1,0 +1,12 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ia-application"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = ["ia-agent-contracts", "ia-domain", "pydantic==2.13.4"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ia_application"]
