@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Any, Protocol, runtime_checkable
 
@@ -8,6 +9,7 @@ from ia_domain import (
     ChatSession,
     ChunkId,
     Classification,
+    Document,
     DocumentChunk,
     DocumentId,
     IngestionJob,
@@ -55,6 +57,24 @@ class EmbeddingResponse(StrictModel):
     input_tokens: Annotated[int, Field(ge=0)] = 0
 
 
+class ExtractedSection(StrictModel):
+    title: Annotated[str, Field(min_length=1, max_length=500)]
+    content: Annotated[str, Field(min_length=1, max_length=2_000_000)]
+    page_number: Annotated[int, Field(gt=0)] | None = None
+
+
+class ExtractedDocument(StrictModel):
+    tenant_id: Annotated[TenantId, Field(min_length=1, max_length=128)]
+    document_id: Annotated[DocumentId, Field(min_length=1, max_length=128)]
+    source_version: Annotated[str, Field(min_length=1, max_length=128)]
+    sections: Annotated[tuple[ExtractedSection, ...], Field(min_length=1)]
+
+
+class IngestionJobClaim(StrictModel):
+    job: IngestionJob
+    acquired: bool
+
+
 class VectorRecord(StrictModel):
     tenant_id: Annotated[TenantId, Field(min_length=1, max_length=128)]
     document_id: Annotated[DocumentId, Field(min_length=1, max_length=128)]
@@ -64,6 +84,9 @@ class VectorRecord(StrictModel):
     source_version: Annotated[str, Field(min_length=1, max_length=128)]
     checksum: Annotated[str, Field(min_length=32, max_length=128)]
     vector: Annotated[tuple[float, ...], Field(min_length=1, max_length=4096)]
+    embedding_model_id: Annotated[str, Field(min_length=1, max_length=300)] | None = None
+    embedding_dimensions: Annotated[int, Field(ge=1, le=4096)] | None = None
+    pipeline_version: Annotated[str, Field(min_length=1, max_length=128)] | None = None
 
 
 class VectorQuery(StrictModel):
@@ -92,10 +115,33 @@ class EmbeddingProvider(Protocol):
 
 
 @runtime_checkable
+class TextExtractor(Protocol):
+    async def extract(self, document: Document) -> ExtractedDocument: ...
+
+
+@runtime_checkable
+class ChunkingStrategy(Protocol):
+    def chunk(
+        self,
+        document: Document,
+        extracted: ExtractedDocument,
+        *,
+        created_at: datetime,
+    ) -> tuple[DocumentChunk, ...]: ...
+
+
+@runtime_checkable
 class VectorRepository(Protocol):
     async def upsert(self, records: Sequence[VectorRecord]) -> None: ...
 
     async def delete_document(self, tenant_id: TenantId, document_id: DocumentId) -> None: ...
+
+    async def delete_version(
+        self,
+        tenant_id: TenantId,
+        document_id: DocumentId,
+        source_version: str,
+    ) -> None: ...
 
     async def query(self, query: VectorQuery) -> tuple[VectorMatch, ...]: ...
 
@@ -107,6 +153,20 @@ class ChunkStore(Protocol):
     async def get(self, tenant_id: TenantId, chunk_id: ChunkId) -> DocumentChunk | None: ...
 
     async def delete_document(self, tenant_id: TenantId, document_id: DocumentId) -> None: ...
+
+    async def delete_version(
+        self,
+        tenant_id: TenantId,
+        document_id: DocumentId,
+        source_version: str,
+    ) -> None: ...
+
+
+@runtime_checkable
+class DocumentRepository(Protocol):
+    async def save(self, document: Document) -> None: ...
+
+    async def get(self, tenant_id: TenantId, document_id: DocumentId) -> Document | None: ...
 
 
 @runtime_checkable
@@ -154,7 +214,13 @@ class UsageRecordRepository(Protocol):
 class IngestionJobRepository(Protocol):
     async def save(self, job: IngestionJob) -> None: ...
 
+    async def claim(self, job: IngestionJob) -> IngestionJobClaim: ...
+
     async def get(self, tenant_id: TenantId, job_id: JobId) -> IngestionJob | None: ...
+
+    async def find_by_fingerprint(
+        self, tenant_id: TenantId, fingerprint: str
+    ) -> IngestionJob | None: ...
 
 
 @runtime_checkable

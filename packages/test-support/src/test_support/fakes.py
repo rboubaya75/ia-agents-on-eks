@@ -4,6 +4,8 @@ from ia_agent_contracts import AgentRequest, AgentResponse
 from ia_application import (
     EmbeddingRequest,
     EmbeddingResponse,
+    ExtractedDocument,
+    IngestionJobClaim,
     ModelRequest,
     ModelResponse,
     VectorMatch,
@@ -14,9 +16,11 @@ from ia_domain import (
     ChatMessage,
     ChatSession,
     ChunkId,
+    Document,
     DocumentChunk,
     DocumentId,
     IngestionJob,
+    IngestionStatus,
     JobId,
     SessionId,
     TenantId,
@@ -52,9 +56,31 @@ class FakeEmbeddingProvider:
         return self._responses.pop(0)
 
 
+class FakeTextExtractor:
+    def __init__(
+        self,
+        responses: dict[tuple[TenantId, DocumentId, str], ExtractedDocument],
+    ) -> None:
+        self._responses = responses.copy()
+        self.requests: list[Document] = []
+
+    async def extract(self, document: Document) -> ExtractedDocument:
+        self.requests.append(document)
+        key = (document.tenant_id, document.document_id, document.source_version)
+        try:
+            return self._responses[key]
+        except KeyError as error:
+            msg = "no fake extraction configured"
+            raise RuntimeError(msg) from error
+
+
 class InMemoryVectorRepository:
     def __init__(self) -> None:
         self._records: dict[tuple[TenantId, ChunkId], VectorRecord] = {}
+
+    @property
+    def records(self) -> tuple[VectorRecord, ...]:
+        return tuple(self._records.values())
 
     async def upsert(self, records: Sequence[VectorRecord]) -> None:
         for record in records:
@@ -65,6 +91,22 @@ class InMemoryVectorRepository:
             key
             for key, record in self._records.items()
             if record.tenant_id == tenant_id and record.document_id == document_id
+        ]
+        for key in keys:
+            del self._records[key]
+
+    async def delete_version(
+        self,
+        tenant_id: TenantId,
+        document_id: DocumentId,
+        source_version: str,
+    ) -> None:
+        keys = [
+            key
+            for key, record in self._records.items()
+            if record.tenant_id == tenant_id
+            and record.document_id == document_id
+            and record.source_version == source_version
         ]
         for key in keys:
             del self._records[key]
@@ -108,6 +150,10 @@ class InMemoryChunkStore:
     def __init__(self) -> None:
         self._chunks: dict[tuple[TenantId, ChunkId], DocumentChunk] = {}
 
+    @property
+    def chunks(self) -> tuple[DocumentChunk, ...]:
+        return tuple(self._chunks.values())
+
     async def put(self, chunk: DocumentChunk) -> None:
         self._chunks[(chunk.tenant_id, chunk.chunk_id)] = chunk
 
@@ -122,6 +168,33 @@ class InMemoryChunkStore:
         ]
         for key in keys:
             del self._chunks[key]
+
+    async def delete_version(
+        self,
+        tenant_id: TenantId,
+        document_id: DocumentId,
+        source_version: str,
+    ) -> None:
+        keys = [
+            key
+            for key, chunk in self._chunks.items()
+            if chunk.tenant_id == tenant_id
+            and chunk.document_id == document_id
+            and chunk.source_version == source_version
+        ]
+        for key in keys:
+            del self._chunks[key]
+
+
+class InMemoryDocumentRepository:
+    def __init__(self) -> None:
+        self._documents: dict[tuple[TenantId, DocumentId], Document] = {}
+
+    async def save(self, document: Document) -> None:
+        self._documents[(document.tenant_id, document.document_id)] = document
+
+    async def get(self, tenant_id: TenantId, document_id: DocumentId) -> Document | None:
+        return self._documents.get((tenant_id, document_id))
 
 
 class InMemoryUserProfileRepository:
@@ -190,12 +263,34 @@ class InMemoryUsageRecordRepository:
 class InMemoryIngestionJobRepository:
     def __init__(self) -> None:
         self._jobs: dict[tuple[TenantId, JobId], IngestionJob] = {}
+        self._fingerprints: dict[tuple[TenantId, str], JobId] = {}
 
     async def save(self, job: IngestionJob) -> None:
         self._jobs[(job.tenant_id, job.job_id)] = job
+        if job.fingerprint is not None:
+            self._fingerprints[(job.tenant_id, job.fingerprint)] = job.job_id
+
+    async def claim(self, job: IngestionJob) -> IngestionJobClaim:
+        if job.fingerprint is None:
+            msg = "claimed ingestion jobs require a fingerprint"
+            raise ValueError(msg)
+        existing = await self.find_by_fingerprint(job.tenant_id, job.fingerprint)
+        if existing is not None and existing.status in {
+            IngestionStatus.RUNNING,
+            IngestionStatus.SUCCEEDED,
+        }:
+            return IngestionJobClaim(job=existing, acquired=False)
+        await self.save(job)
+        return IngestionJobClaim(job=job, acquired=True)
 
     async def get(self, tenant_id: TenantId, job_id: JobId) -> IngestionJob | None:
         return self._jobs.get((tenant_id, job_id))
+
+    async def find_by_fingerprint(
+        self, tenant_id: TenantId, fingerprint: str
+    ) -> IngestionJob | None:
+        job_id = self._fingerprints.get((tenant_id, fingerprint))
+        return None if job_id is None else self._jobs.get((tenant_id, job_id))
 
 
 class FakeAgentRuntimeClient:

@@ -3,7 +3,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ia_domain.types import (
     AgentId,
@@ -52,6 +52,16 @@ class MessageRole(StrEnum):
     ASSISTANT = "assistant"
     SYSTEM = "system"
     TOOL = "tool"
+
+
+class DocumentStatus(StrEnum):
+    PENDING_UPLOAD = "pending_upload"
+    UPLOADED = "uploaded"
+    PROCESSING = "processing"
+    INDEXED = "indexed"
+    FAILED = "failed"
+    DELETING = "deleting"
+    DELETED = "deleted"
 
 
 class IngestionStatus(StrEnum):
@@ -142,6 +152,26 @@ class UsageRecord(StrictModel):
     _validate_timestamp = field_validator("timestamp")(_require_aware)
 
 
+class Document(StrictModel):
+    tenant_id: TenantIdField
+    document_id: DocumentIdField
+    owner_user_id: UserIdField
+    title: Annotated[str, Field(min_length=1, max_length=500)]
+    source_uri: Annotated[str, Field(min_length=1, max_length=2048)]
+    source_version: Annotated[str, Field(min_length=1, max_length=128)]
+    source_checksum: Annotated[str, Field(min_length=32, max_length=128)]
+    content_type: Annotated[str, Field(min_length=1, max_length=255)]
+    language: Annotated[str, Field(min_length=2, max_length=35)]
+    classification: Classification
+    allowed_roles: Annotated[frozenset[Role], Field(min_length=1)]
+    status: DocumentStatus
+    created_at: datetime
+    updated_at: datetime
+
+    _validate_created_at = field_validator("created_at")(_require_aware)
+    _validate_updated_at = field_validator("updated_at")(_require_aware)
+
+
 class IngestionJob(StrictModel):
     tenant_id: TenantIdField
     job_id: JobIdField
@@ -151,6 +181,11 @@ class IngestionJob(StrictModel):
     chunks_created: Annotated[int, Field(ge=0)] = 0
     vectors_created: Annotated[int, Field(ge=0)] = 0
     error_code: Annotated[str, Field(min_length=1, max_length=128)] | None = None
+    fingerprint: Annotated[str, Field(min_length=32, max_length=128)] | None = None
+    source_checksum: Annotated[str, Field(min_length=32, max_length=128)] | None = None
+    embedding_model_alias: Annotated[str, Field(min_length=1, max_length=128)] | None = None
+    chunking_version: Annotated[str, Field(min_length=1, max_length=128)] | None = None
+    pipeline_version: Annotated[str, Field(min_length=1, max_length=128)] | None = None
     started_at: datetime
     completed_at: datetime | None = None
 
@@ -176,5 +211,17 @@ class DocumentChunk(StrictModel):
     checksum: Annotated[str, Field(min_length=32, max_length=128)]
     content: Annotated[str, Field(min_length=1, max_length=200_000)]
     created_at: datetime
+    sequence: Annotated[int, Field(ge=0)] = 0
+    start_offset: Annotated[int, Field(ge=0)] = 0
+    end_offset: Annotated[int, Field(gt=0)] | None = None
+    chunking_version: Annotated[str, Field(min_length=1, max_length=128)] = "legacy-v1"
+    page_number: Annotated[int, Field(gt=0)] | None = None
 
     _validate_created_at = field_validator("created_at")(_require_aware)
+
+    @model_validator(mode="after")
+    def validate_offsets(self) -> "DocumentChunk":
+        if self.end_offset is not None and self.end_offset <= self.start_offset:
+            msg = "end_offset must be greater than start_offset"
+            raise ValueError(msg)
+        return self
