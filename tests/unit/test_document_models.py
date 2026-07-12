@@ -43,6 +43,7 @@ def test_document_chunk_rejects_invalid_normalized_offsets() -> None:
             tenant_id=TenantId("tenant-a"),
             document_id=DocumentId("document-a"),
             chunk_id=ChunkId("chunk-a"),
+            generation_id="generation-a",
             source_version="v1",
             source_uri="s3://documents/tenant-a/document-a/v1/source.pdf",
             title="Policy",

@@ -12,6 +12,7 @@ from ia_domain import (
     Document,
     DocumentChunk,
     DocumentId,
+    IndexGeneration,
     IngestionJob,
     JobId,
     Role,
@@ -21,7 +22,11 @@ from ia_domain import (
     UserId,
     UserProfile,
 )
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class RepositoryConflictError(RuntimeError):
+    """Raised when an optimistic or fencing condition rejects a write."""
 
 
 class StrictModel(BaseModel):
@@ -43,6 +48,13 @@ class ModelResponse(StrictModel):
     output_tokens: Annotated[int, Field(ge=0)]
     latency_ms: Annotated[int, Field(ge=0)]
     estimated_cost_usd: Annotated[Decimal, Field(ge=0)]
+
+
+class EmbeddingProfile(StrictModel):
+    alias: Annotated[str, Field(min_length=1, max_length=128)]
+    revision: Annotated[str, Field(min_length=1, max_length=128)]
+    model_id: Annotated[str, Field(min_length=1, max_length=300)]
+    dimensions: Annotated[int, Field(ge=1, le=4096)]
 
 
 class EmbeddingRequest(StrictModel):
@@ -67,7 +79,7 @@ class ExtractedDocument(StrictModel):
     tenant_id: Annotated[TenantId, Field(min_length=1, max_length=128)]
     document_id: Annotated[DocumentId, Field(min_length=1, max_length=128)]
     source_version: Annotated[str, Field(min_length=1, max_length=128)]
-    sections: Annotated[tuple[ExtractedSection, ...], Field(min_length=1)]
+    sections: Annotated[tuple[ExtractedSection, ...], Field(min_length=1, max_length=10_000)]
 
 
 class IngestionJobClaim(StrictModel):
@@ -75,10 +87,33 @@ class IngestionJobClaim(StrictModel):
     acquired: bool
 
 
+class IngestionLease(StrictModel):
+    tenant_id: Annotated[TenantId, Field(min_length=1, max_length=128)]
+    document_id: Annotated[DocumentId, Field(min_length=1, max_length=128)]
+    source_version: Annotated[str, Field(min_length=1, max_length=128)]
+    owner_token: Annotated[str, Field(min_length=1, max_length=128)]
+    fencing_token: Annotated[int, Field(gt=0)]
+    expires_at: datetime
+
+    @field_validator("expires_at")
+    @classmethod
+    def validate_expires_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            msg = "expires_at must include a timezone"
+            raise ValueError(msg)
+        return value
+
+
+class IngestionLeaseClaim(StrictModel):
+    lease: IngestionLease
+    acquired: bool
+
+
 class VectorRecord(StrictModel):
     tenant_id: Annotated[TenantId, Field(min_length=1, max_length=128)]
     document_id: Annotated[DocumentId, Field(min_length=1, max_length=128)]
     chunk_id: Annotated[ChunkId, Field(min_length=1, max_length=128)]
+    generation_id: Annotated[str, Field(min_length=1, max_length=128)] = "legacy-generation"
     classification: Classification
     allowed_roles: Annotated[frozenset[Role], Field(min_length=1)]
     source_version: Annotated[str, Field(min_length=1, max_length=128)]
@@ -111,6 +146,8 @@ class ModelProvider(Protocol):
 
 @runtime_checkable
 class EmbeddingProvider(Protocol):
+    async def resolve_profile(self, model_alias: str) -> EmbeddingProfile: ...
+
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResponse: ...
 
 
@@ -121,11 +158,15 @@ class TextExtractor(Protocol):
 
 @runtime_checkable
 class ChunkingStrategy(Protocol):
+    @property
+    def version(self) -> str: ...
+
     def chunk(
         self,
         document: Document,
         extracted: ExtractedDocument,
         *,
+        generation_id: str,
         created_at: datetime,
     ) -> tuple[DocumentChunk, ...]: ...
 
@@ -136,11 +177,11 @@ class VectorRepository(Protocol):
 
     async def delete_document(self, tenant_id: TenantId, document_id: DocumentId) -> None: ...
 
-    async def delete_version(
+    async def delete_generation(
         self,
         tenant_id: TenantId,
         document_id: DocumentId,
-        source_version: str,
+        generation_id: str,
     ) -> None: ...
 
     async def query(self, query: VectorQuery) -> tuple[VectorMatch, ...]: ...
@@ -148,25 +189,75 @@ class VectorRepository(Protocol):
 
 @runtime_checkable
 class ChunkStore(Protocol):
-    async def put(self, chunk: DocumentChunk) -> None: ...
+    async def put_batch(self, chunks: Sequence[DocumentChunk]) -> None: ...
 
-    async def get(self, tenant_id: TenantId, chunk_id: ChunkId) -> DocumentChunk | None: ...
+    async def get(
+        self,
+        tenant_id: TenantId,
+        generation_id: str,
+        chunk_id: ChunkId,
+    ) -> DocumentChunk | None: ...
 
     async def delete_document(self, tenant_id: TenantId, document_id: DocumentId) -> None: ...
 
-    async def delete_version(
+    async def delete_generation(
         self,
         tenant_id: TenantId,
         document_id: DocumentId,
-        source_version: str,
+        generation_id: str,
     ) -> None: ...
 
 
 @runtime_checkable
 class DocumentRepository(Protocol):
-    async def save(self, document: Document) -> None: ...
+    async def save(
+        self,
+        document: Document,
+        *,
+        expected_revision: int | None = None,
+    ) -> Document: ...
 
     async def get(self, tenant_id: TenantId, document_id: DocumentId) -> Document | None: ...
+
+
+@runtime_checkable
+class IndexGenerationRepository(Protocol):
+    async def save(self, generation: IndexGeneration) -> None: ...
+
+    async def get(
+        self,
+        tenant_id: TenantId,
+        document_id: DocumentId,
+        generation_id: str,
+    ) -> IndexGeneration | None: ...
+
+
+@runtime_checkable
+class IndexActivationRepository(Protocol):
+    async def activate(
+        self,
+        *,
+        generation: IndexGeneration,
+        succeeded_job: IngestionJob,
+        expected_document_revision: int,
+        activated_at: datetime,
+    ) -> Document: ...
+
+
+@runtime_checkable
+class DocumentIngestionLeaseRepository(Protocol):
+    async def acquire(
+        self,
+        *,
+        tenant_id: TenantId,
+        document_id: DocumentId,
+        source_version: str,
+        owner_token: str,
+        expires_at: datetime,
+        now: datetime,
+    ) -> IngestionLeaseClaim: ...
+
+    async def release(self, lease: IngestionLease) -> None: ...
 
 
 @runtime_checkable

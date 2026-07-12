@@ -1,202 +1,65 @@
-from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from ia_application import (
-    ChunkingConfig,
-    DocumentIngestionService,
     DocumentNotFoundError,
     EmbeddingResponse,
-    ExtractedDocument,
-    ExtractedSection,
     IngestDocumentCommand,
-    IngestionFailedError,
+    IngestionInProgressError,
     InvalidEmbeddingResponseError,
-    InvalidExtractionError,
-    ParagraphChunker,
-    VectorRecord,
 )
 from ia_domain import (
     Classification,
-    Document,
     DocumentId,
     DocumentStatus,
     IngestionStatus,
     JobId,
     Role,
     TenantId,
-    UserId,
 )
-from test_support import (
-    FakeEmbeddingProvider,
-    FakeTextExtractor,
-    InMemoryChunkStore,
-    InMemoryDocumentRepository,
-    InMemoryIngestionJobRepository,
-    InMemoryVectorRepository,
+from test_support import FakeEmbeddingProvider, InMemoryIndexActivationRepository
+
+from tests.unit.phase3_ingestion_support import (
+    NOW,
+    Clock,
+    chunk_count,
+    command,
+    environment,
+    profile,
+    responses,
 )
-
-NOW = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
-
-
-class Clock:
-    def __init__(self) -> None:
-        self._value = NOW
-
-    def __call__(self) -> datetime:
-        value = self._value
-        self._value += timedelta(seconds=1)
-        return value
-
-
-def _document(*, tenant: str = "tenant-a") -> Document:
-    return Document(
-        tenant_id=TenantId(tenant),
-        document_id=DocumentId("document-a"),
-        owner_user_id=UserId("user-a"),
-        title="Policy",
-        source_uri=f"s3://documents/{tenant}/document-a/v1/source.pdf",
-        source_version="v1",
-        source_checksum="a" * 64,
-        content_type="application/pdf",
-        language="fr",
-        classification=Classification.CONFIDENTIAL,
-        allowed_roles=frozenset({Role.SUPPORT, Role.TENANT_ADMIN}),
-        status=DocumentStatus.UPLOADED,
-        created_at=NOW,
-        updated_at=NOW,
-    )
-
-
-def _extracted(*, tenant: str = "tenant-a") -> ExtractedDocument:
-    return ExtractedDocument(
-        tenant_id=TenantId(tenant),
-        document_id=DocumentId("document-a"),
-        source_version="v1",
-        sections=(
-            ExtractedSection(
-                title="Policy",
-                content=(
-                    "First paragraph contains the refund rules and processing deadlines. "
-                    "It includes enough detail to form a useful retrieval chunk.\n\n"
-                    "Second paragraph explains exceptional approval rules and audit controls. "
-                    "It also contains enough detail for a second retrieval chunk."
-                ),
-            ),
-        ),
-    )
-
-
-async def _service(
-    *,
-    embedding_responses: list[EmbeddingResponse],
-) -> tuple[
-    DocumentIngestionService,
-    InMemoryDocumentRepository,
-    InMemoryIngestionJobRepository,
-    FakeTextExtractor,
-    FakeEmbeddingProvider,
-    InMemoryChunkStore,
-    InMemoryVectorRepository,
-    ParagraphChunker,
-]:
-    document = _document()
-    documents = InMemoryDocumentRepository()
-    await documents.save(document)
-    jobs = InMemoryIngestionJobRepository()
-    extractor = FakeTextExtractor(
-        {(document.tenant_id, document.document_id, document.source_version): _extracted()}
-    )
-    embeddings = FakeEmbeddingProvider(embedding_responses)
-    chunks = InMemoryChunkStore()
-    vectors = InMemoryVectorRepository()
-    chunker = ParagraphChunker(
-        ChunkingConfig(
-            max_characters=130,
-            overlap_characters=10,
-            minimum_characters=30,
-            version="paragraph-test-v1",
-        )
-    )
-    service = DocumentIngestionService(
-        documents=documents,
-        jobs=jobs,
-        extractor=extractor,
-        chunker=chunker,
-        embeddings=embeddings,
-        chunks=chunks,
-        vectors=vectors,
-        clock=Clock(),
-    )
-    return service, documents, jobs, extractor, embeddings, chunks, vectors, chunker
 
 
 @pytest.mark.asyncio
-async def test_ingestion_indexes_chunks_in_batches_and_is_idempotent() -> None:
-    chunker = ParagraphChunker(
-        ChunkingConfig(
-            max_characters=130,
-            overlap_characters=10,
-            minimum_characters=30,
-            version="paragraph-test-v1",
-        )
-    )
-    expected = chunker.chunk(_document(), _extracted(), created_at=NOW)
-    responses = [
-        EmbeddingResponse(
-            model_id="embedding-model-v1",
-            dimensions=2,
-            vectors=tuple((float(index + 1), 1.0) for index in range(len(batch))),
-        )
-        for batch in (expected[index : index + 2] for index in range(0, len(expected), 2))
-    ]
-    (
-        service,
-        documents,
-        _jobs,
-        extractor,
-        embeddings,
-        chunks,
-        vectors,
-        _chunker,
-    ) = await _service(embedding_responses=responses)
-    command = IngestDocumentCommand(
-        tenant_id=TenantId("tenant-a"),
-        document_id=DocumentId("document-a"),
-        job_id=JobId("job-a"),
-        embedding_model_alias="default",
-        embedding_batch_size=2,
-    )
+async def test_ingestion_publishes_generation_and_is_idempotent() -> None:
+    expected_count = chunk_count()
+    value = await environment(embedding_responses=responses(expected_count, batch_size=2))
 
-    first = await service.ingest(command)
-    second = await service.ingest(command.model_copy(update={"job_id": JobId("job-b")}))
+    first = await value.service.ingest(command())
+    second = await value.service.ingest(command("job-b"))
 
     assert first.status is IngestionStatus.SUCCEEDED
-    assert first.chunks_created == len(expected)
-    assert first.vectors_created == len(expected)
+    assert first.chunks_created == expected_count
+    assert first.vectors_created == expected_count
     assert second == first
-    assert len(extractor.requests) == 1
-    assert len(embeddings.requests) == len(responses)
-    assert len(chunks.chunks) == len(expected)
-    assert len(vectors.records) == len(expected)
-    assert all(record.embedding_model_id == "embedding-model-v1" for record in vectors.records)
-    stored = await documents.get(TenantId("tenant-a"), DocumentId("document-a"))
+    assert len(value.extractor.requests) == 1
+    stored = await value.documents.get(TenantId("tenant-a"), DocumentId("document-a"))
     assert stored is not None
     assert stored.status is DocumentStatus.INDEXED
+    assert stored.active_generation_id == first.generation_id
+    assert all(chunk.generation_id == first.generation_id for chunk in value.chunks.chunks)
+    active = await value.generations.get(
+        TenantId("tenant-a"),
+        DocumentId("document-a"),
+        str(first.generation_id),
+    )
+    assert active is not None
+    assert active.status.value == "active"
 
 
 @pytest.mark.asyncio
-async def test_invalid_embedding_response_cleans_partial_version_and_records_failure() -> None:
-    (
-        service,
-        documents,
-        jobs,
-        _extractor,
-        _embeddings,
-        chunks,
-        vectors,
-        _chunker,
-    ) = await _service(
+async def test_invalid_embedding_response_records_stable_failure_code() -> None:
+    value = await environment(
         embedding_responses=[
             EmbeddingResponse(
                 model_id="embedding-model-v1",
@@ -205,43 +68,27 @@ async def test_invalid_embedding_response_cleans_partial_version_and_records_fai
             )
         ]
     )
-    command = IngestDocumentCommand(
-        tenant_id=TenantId("tenant-a"),
-        document_id=DocumentId("document-a"),
-        job_id=JobId("job-failed"),
-        embedding_model_alias="default",
-        embedding_batch_size=10,
-    )
 
     with pytest.raises(InvalidEmbeddingResponseError):
-        await service.ingest(command)
+        await value.service.ingest(command("job-failed", batch_size=10))
 
-    assert chunks.chunks == ()
-    assert vectors.records == ()
-    failed = await jobs.get(TenantId("tenant-a"), JobId("job-failed"))
+    assert value.chunks.chunks == ()
+    assert value.vectors.records == ()
+    failed = await value.jobs.get(TenantId("tenant-a"), JobId("job-failed"))
     assert failed is not None
     assert failed.status is IngestionStatus.FAILED
-    assert failed.error_code == "InvalidEmbeddingResponseError"
-    stored = await documents.get(TenantId("tenant-a"), DocumentId("document-a"))
+    assert failed.error_code == "INVALID_EMBEDDING_RESPONSE"
+    stored = await value.documents.get(TenantId("tenant-a"), DocumentId("document-a"))
     assert stored is not None
     assert stored.status is DocumentStatus.FAILED
 
 
 @pytest.mark.asyncio
 async def test_wrong_tenant_cannot_start_ingestion() -> None:
-    (
-        service,
-        _documents,
-        _jobs,
-        extractor,
-        _embeddings,
-        _chunks,
-        _vectors,
-        _chunker,
-    ) = await _service(embedding_responses=[])
+    value = await environment()
 
     with pytest.raises(DocumentNotFoundError):
-        await service.ingest(
+        await value.service.ingest(
             IngestDocumentCommand(
                 tenant_id=TenantId("tenant-b"),
                 document_id=DocumentId("document-a"),
@@ -250,112 +97,140 @@ async def test_wrong_tenant_cannot_start_ingestion() -> None:
             )
         )
 
-    assert extractor.requests == []
-
-
-class FailingVectorRepository(InMemoryVectorRepository):
-    async def upsert(self, records: Sequence[VectorRecord]) -> None:
-        if records:
-            await super().upsert(records[:1])
-        raise RuntimeError("vector write failed")
+    assert value.extractor.requests == []
 
 
 @pytest.mark.asyncio
-async def test_mismatched_extraction_fails_closed_before_replacement() -> None:
-    document = _document().model_copy(update={"status": DocumentStatus.INDEXED})
-    documents = InMemoryDocumentRepository()
-    await documents.save(document)
-    jobs = InMemoryIngestionJobRepository()
-    extractor = FakeTextExtractor(
-        {
-            (document.tenant_id, document.document_id, document.source_version): _extracted(
-                tenant="tenant-b"
-            )
-        }
-    )
-    chunks = InMemoryChunkStore()
-    vectors = InMemoryVectorRepository()
-    service = DocumentIngestionService(
-        documents=documents,
-        jobs=jobs,
-        extractor=extractor,
-        chunker=ParagraphChunker(
-            ChunkingConfig(
-                max_characters=130,
-                overlap_characters=10,
-                minimum_characters=30,
-                version="paragraph-test-v1",
-            )
-        ),
-        embeddings=FakeEmbeddingProvider([]),
-        chunks=chunks,
-        vectors=vectors,
-        clock=Clock(),
+async def test_document_version_lease_blocks_different_pipeline_fingerprint() -> None:
+    value = await environment()
+    owner_token = str(command("other-job").job_id)
+    await value.leases.acquire(
+        tenant_id=TenantId("tenant-a"),
+        document_id=DocumentId("document-a"),
+        source_version="v1",
+        owner_token=owner_token,
+        expires_at=NOW + timedelta(minutes=5),
+        now=NOW,
     )
 
-    with pytest.raises(InvalidExtractionError):
-        await service.ingest(
-            IngestDocumentCommand(
-                tenant_id=document.tenant_id,
-                document_id=document.document_id,
-                job_id=JobId("job-mismatch"),
-                embedding_model_alias="default",
-            )
-        )
+    with pytest.raises(IngestionInProgressError):
+        await value.service.ingest(command("job-b", pipeline_version="ingestion-v2"))
 
-    stored = await documents.get(document.tenant_id, document.document_id)
-    assert stored is not None
-    assert stored.status is DocumentStatus.INDEXED
+    assert value.extractor.requests == []
 
 
 @pytest.mark.asyncio
-async def test_partial_vector_write_is_cleaned_and_wrapped() -> None:
-    document = _document()
-    documents = InMemoryDocumentRepository()
-    await documents.save(document)
-    jobs = InMemoryIngestionJobRepository()
-    extractor = FakeTextExtractor(
-        {(document.tenant_id, document.document_id, document.source_version): _extracted()}
-    )
-    chunks = InMemoryChunkStore()
-    vectors = FailingVectorRepository()
-    chunker = ParagraphChunker(
-        ChunkingConfig(
-            max_characters=500,
-            overlap_characters=20,
-            minimum_characters=30,
-            version="paragraph-test-v1",
+async def test_permissions_change_forces_new_generation() -> None:
+    expected_count = chunk_count()
+    value = await environment(
+        embedding_responses=(
+            responses(expected_count, batch_size=2) + responses(expected_count, batch_size=2)
         )
     )
-    expected = chunker.chunk(document, _extracted(), created_at=NOW)
-    service = DocumentIngestionService(
-        documents=documents,
-        jobs=jobs,
-        extractor=extractor,
-        chunker=chunker,
-        embeddings=FakeEmbeddingProvider(
-            [
-                EmbeddingResponse(
-                    model_id="embedding-model-v1",
-                    dimensions=2,
-                    vectors=tuple((1.0, 0.0) for _chunk in expected),
-                )
-            ]
+
+    first = await value.service.ingest(command("job-a"))
+    current = await value.documents.get(TenantId("tenant-a"), DocumentId("document-a"))
+    assert current is not None
+    await value.documents.save(
+        current.model_copy(
+            update={
+                "allowed_roles": frozenset({Role.TENANT_ADMIN}),
+                "classification": Classification.RESTRICTED,
+            }
         ),
-        chunks=chunks,
-        vectors=vectors,
+        expected_revision=current.revision,
+    )
+
+    second = await value.service.ingest(command("job-b"))
+
+    assert second.fingerprint != first.fingerprint
+    assert second.authorization_checksum != first.authorization_checksum
+    assert second.generation_id != first.generation_id
+    assert len(value.extractor.requests) == 2
+    assert all(chunk.generation_id == second.generation_id for chunk in value.chunks.chunks)
+
+
+@pytest.mark.asyncio
+async def test_embedding_profile_revision_forces_reingestion() -> None:
+    expected_count = chunk_count()
+    value = await environment(
+        embedding_responses=responses(expected_count, batch_size=2),
+        embedding_profile=profile(revision="profile-v1"),
+    )
+    first = await value.service.ingest(command("job-a"))
+    replacement_embeddings = FakeEmbeddingProvider(
+        responses(expected_count, batch_size=2),
+        profile=profile(revision="profile-v2"),
+    )
+    replacement_service = type(value.service)(
+        documents=value.documents,
+        jobs=value.jobs,
+        leases=value.leases,
+        generations=value.generations,
+        activations=InMemoryIndexActivationRepository(
+            documents=value.documents,
+            generations=value.generations,
+            jobs=value.jobs,
+        ),
+        extractor=value.extractor,
+        chunker=value.chunker,
+        embeddings=replacement_embeddings,
+        chunks=value.chunks,
+        vectors=value.vectors,
         clock=Clock(),
     )
 
-    with pytest.raises(IngestionFailedError):
-        await service.ingest(
-            IngestDocumentCommand(
-                tenant_id=document.tenant_id,
-                document_id=document.document_id,
-                job_id=JobId("job-partial-write"),
-                embedding_model_alias="default",
-            )
-        )
+    second = await replacement_service.ingest(command("job-b"))
 
-    assert chunks.chunks == ()
-    assert vectors.records == ()
+    assert second.fingerprint != first.fingerprint
+    assert second.embedding_profile_revision == "profile-v2"
+
+
+@pytest.mark.asyncio
+async def test_model_id_cannot_change_between_embedding_batches() -> None:
+    value = await environment(
+        embedding_responses=[
+            EmbeddingResponse(
+                model_id="embedding-model-v1",
+                dimensions=2,
+                vectors=((1.0, 0.0),),
+            ),
+            EmbeddingResponse(
+                model_id="embedding-model-v2",
+                dimensions=2,
+                vectors=((0.0, 1.0),),
+            ),
+            EmbeddingResponse(
+                model_id="embedding-model-v1",
+                dimensions=2,
+                vectors=((1.0, 1.0),),
+            ),
+        ],
+        embedding_profile=profile(model_id="embedding-model-v1"),
+    )
+
+    with pytest.raises(InvalidEmbeddingResponseError, match="model changed"):
+        await value.service.ingest(command("job-model-change", batch_size=1))
+
+    assert value.chunks.chunks == ()
+    assert value.vectors.records == ()
+
+
+@pytest.mark.asyncio
+async def test_non_finite_embedding_value_is_rejected() -> None:
+    expected_count = chunk_count()
+    vectors = tuple(
+        (float("nan"), 0.0) if index == 0 else (1.0, 0.0) for index in range(expected_count)
+    )
+    value = await environment(
+        embedding_responses=[
+            EmbeddingResponse(
+                model_id="embedding-model-v1",
+                dimensions=2,
+                vectors=vectors,
+            )
+        ]
+    )
+
+    with pytest.raises(InvalidEmbeddingResponseError, match="non-finite"):
+        await value.service.ingest(command("job-nan", batch_size=10))

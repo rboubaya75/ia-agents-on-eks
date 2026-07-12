@@ -71,6 +71,14 @@ class IngestionStatus(StrEnum):
     FAILED = "failed"
 
 
+class IndexGenerationStatus(StrEnum):
+    BUILDING = "building"
+    READY = "ready"
+    ACTIVE = "active"
+    FAILED = "failed"
+    SUPERSEDED = "superseded"
+
+
 def _require_aware(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         msg = "timestamp must include a timezone"
@@ -165,6 +173,10 @@ class Document(StrictModel):
     classification: Classification
     allowed_roles: Annotated[frozenset[Role], Field(min_length=1)]
     status: DocumentStatus
+    revision: Annotated[int, Field(ge=0)] = 0
+    active_generation_id: Annotated[str, Field(min_length=1, max_length=128)] | None = None
+    active_index_fingerprint: Annotated[str, Field(min_length=32, max_length=128)] | None = None
+    last_fencing_token: Annotated[int, Field(ge=0)] = 0
     created_at: datetime
     updated_at: datetime
 
@@ -182,10 +194,16 @@ class IngestionJob(StrictModel):
     vectors_created: Annotated[int, Field(ge=0)] = 0
     error_code: Annotated[str, Field(min_length=1, max_length=128)] | None = None
     fingerprint: Annotated[str, Field(min_length=32, max_length=128)] | None = None
+    generation_id: Annotated[str, Field(min_length=1, max_length=128)] | None = None
     source_checksum: Annotated[str, Field(min_length=32, max_length=128)] | None = None
+    authorization_checksum: Annotated[str, Field(min_length=32, max_length=128)] | None = None
     embedding_model_alias: Annotated[str, Field(min_length=1, max_length=128)] | None = None
+    embedding_profile_revision: Annotated[str, Field(min_length=1, max_length=128)] | None = None
+    resolved_embedding_model_id: Annotated[str, Field(min_length=1, max_length=300)] | None = None
+    embedding_dimensions: Annotated[int, Field(ge=1, le=4096)] | None = None
     chunking_version: Annotated[str, Field(min_length=1, max_length=128)] | None = None
     pipeline_version: Annotated[str, Field(min_length=1, max_length=128)] | None = None
+    fencing_token: Annotated[int, Field(gt=0)] | None = None
     started_at: datetime
     completed_at: datetime | None = None
 
@@ -201,6 +219,7 @@ class DocumentChunk(StrictModel):
     tenant_id: TenantIdField
     document_id: DocumentIdField
     chunk_id: ChunkIdField
+    generation_id: Annotated[str, Field(min_length=1, max_length=128)] = "legacy-generation"
     source_version: Annotated[str, Field(min_length=1, max_length=128)]
     source_uri: Annotated[str, Field(min_length=1, max_length=2048)]
     title: Annotated[str, Field(min_length=1, max_length=500)]
@@ -225,3 +244,29 @@ class DocumentChunk(StrictModel):
             msg = "end_offset must be greater than start_offset"
             raise ValueError(msg)
         return self
+
+
+class IndexGeneration(StrictModel):
+    tenant_id: TenantIdField
+    document_id: DocumentIdField
+    source_version: Annotated[str, Field(min_length=1, max_length=128)]
+    generation_id: Annotated[str, Field(min_length=1, max_length=128)]
+    fingerprint: Annotated[str, Field(min_length=32, max_length=128)]
+    authorization_checksum: Annotated[str, Field(min_length=32, max_length=128)]
+    embedding_profile_revision: Annotated[str, Field(min_length=1, max_length=128)]
+    embedding_model_id: Annotated[str, Field(min_length=1, max_length=300)]
+    embedding_dimensions: Annotated[int, Field(ge=1, le=4096)]
+    status: IndexGenerationStatus
+    fencing_token: Annotated[int, Field(gt=0)]
+    chunk_count: Annotated[int, Field(ge=0)] = 0
+    vector_count: Annotated[int, Field(ge=0)] = 0
+    created_at: datetime
+    ready_at: datetime | None = None
+    activated_at: datetime | None = None
+
+    _validate_created_at = field_validator("created_at")(_require_aware)
+
+    @field_validator("ready_at", "activated_at")
+    @classmethod
+    def validate_optional_timestamp(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else _require_aware(value)

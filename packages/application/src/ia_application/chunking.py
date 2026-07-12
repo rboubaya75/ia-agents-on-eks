@@ -44,6 +44,7 @@ class ParagraphChunker:
         document: Document,
         extracted: ExtractedDocument,
         *,
+        generation_id: str,
         created_at: datetime,
     ) -> tuple[DocumentChunk, ...]:
         self._validate_identity(document, extracted)
@@ -66,6 +67,7 @@ class ParagraphChunker:
                         tenant_id=document.tenant_id,
                         document_id=document.document_id,
                         chunk_id=ChunkId(chunk_id),
+                        generation_id=generation_id,
                         source_version=document.source_version,
                         source_uri=document.source_uri,
                         title=document.title,
@@ -122,14 +124,7 @@ class ParagraphChunker:
             if end >= text_length:
                 break
             next_cursor = max(0, end - self._config.overlap_characters)
-            if next_cursor <= cursor:
-                next_cursor = end
-            if text_length - next_cursor < self._config.minimum_characters and windows:
-                previous_start, _previous_end, _previous_content = windows[-1]
-                merged = text[previous_start:].strip()
-                windows[-1] = (previous_start, previous_start + len(merged), merged)
-                break
-            cursor = next_cursor
+            cursor = end if next_cursor <= cursor else next_cursor
         return tuple(windows)
 
     def _preferred_boundary(self, text: str, start: int, proposed_end: int) -> int:
