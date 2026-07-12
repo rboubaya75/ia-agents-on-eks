@@ -181,9 +181,7 @@ class DocumentIngestionService:
                 else DocumentStatus.FAILED
             )
             await self._documents.save(
-                document.model_copy(
-                    update={"status": failure_status, "updated_at": completed_at}
-                )
+                document.model_copy(update={"status": failure_status, "updated_at": completed_at})
             )
             await self._jobs.save(failed)
             if isinstance(error, IngestionError):
@@ -265,9 +263,7 @@ class DocumentIngestionService:
         )
 
     @staticmethod
-    def _validate_extraction_identity(
-        document: Document, extracted: ExtractedDocument
-    ) -> None:
+    def _validate_extraction_identity(document: Document, extracted: ExtractedDocument) -> None:
         if (
             document.tenant_id != extracted.tenant_id
             or document.document_id != extracted.document_id
