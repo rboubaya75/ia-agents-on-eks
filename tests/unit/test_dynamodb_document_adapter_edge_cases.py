@@ -57,9 +57,7 @@ class LowLevelClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
         self.error: ClientError | None = None
-        self.update_response: dict[str, object] = {
-            "Attributes": {"pk": {"S": "tenant"}}
-        }
+        self.update_response: dict[str, object] = {"Attributes": {"pk": {"S": "tenant"}}}
 
     def get_item(self, **kwargs: object) -> dict[str, object]:
         self.calls.append(("get", kwargs))
@@ -301,9 +299,7 @@ async def test_low_level_control_reports_missing_attributes_and_conditions() -> 
     )
     client.update_response = {}
     with pytest.raises(RuntimeError, match="attributes"):
-        await table.update_item(
-            {"pk": "tenant"}, update_expression="SET value = :value"
-        )
+        await table.update_item({"pk": "tenant"}, update_expression="SET value = :value")
 
     client.error = _client_error("ConditionalCheckFailedException")
     with pytest.raises(DynamoConditionFailedError):
@@ -350,9 +346,7 @@ async def test_document_repository_conflicts_and_defensive_identity_filter() -> 
     table.put_error = False
     wrong = _document(tenant_id="tenant-b")
     requested_key = _document_item(_document())
-    table.items[(str(requested_key["pk"]), str(requested_key["sk"]))] = _document_item(
-        wrong
-    )
+    table.items[(str(requested_key["pk"]), str(requested_key["sk"]))] = _document_item(wrong)
     assert await repository.get(TenantId("tenant-a"), DocumentId("document-a")) is None
 
     table.put_error = True
