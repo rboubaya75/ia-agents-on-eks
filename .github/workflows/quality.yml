@@ -43,4 +43,17 @@ jobs:
         run: uv run mypy
 
       - name: Tests
-        run: uv run pytest
+        id: tests
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run pytest 2>&1 | tee pytest.log
+
+      - name: Upload pytest failure log
+        if: failure() && steps.tests.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-failure-log
+          path: pytest.log
+          if-no-files-found: error
+          retention-days: 7
