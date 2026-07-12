@@ -314,7 +314,7 @@ def test_transaction_token_requires_non_empty_parts(parts: tuple[str, ...]) -> N
 
 def test_codec_round_trips_all_control_entities() -> None:
     document = _document()
-    job = _job(IngestionStatus.SUCCEEDED)
+    job = _job(status=IngestionStatus.SUCCEEDED)
     generation = _generation()
 
     assert _decode_document(_document_item(document)) == document
