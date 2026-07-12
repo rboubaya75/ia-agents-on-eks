@@ -134,9 +134,7 @@ def test_response_body_requires_readable_payload(
 def test_response_body_accepts_bytes_and_text() -> None:
     assert BedrockTitanEmbeddingProvider._response_body({"body": b"{}"}) == "{}"
     assert BedrockTitanEmbeddingProvider._response_body({"body": "{}"}) == "{}"
-    assert (
-        BedrockTitanEmbeddingProvider._response_body({"body": ByteBody(b"{}")}) == "{}"
-    )
+    assert BedrockTitanEmbeddingProvider._response_body({"body": ByteBody(b"{}")}) == "{}"
 
 
 @pytest.mark.parametrize(
