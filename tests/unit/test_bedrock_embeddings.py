@@ -96,9 +96,7 @@ async def test_titan_provider_rejects_unknown_alias_and_invalid_response() -> No
 
 
 @pytest.mark.asyncio
-async def test_titan_provider_rejects_blank_and_oversized_text_without_aws_call() -> (
-    None
-):
+async def test_titan_provider_rejects_blank_and_oversized_text_without_aws_call() -> None:
     client = RecordingBedrockClient([])
     provider = BedrockTitanEmbeddingProvider(
         cast(BedrockRuntimeClient, client),

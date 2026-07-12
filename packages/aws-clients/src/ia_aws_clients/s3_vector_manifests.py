@@ -81,9 +81,7 @@ class S3VectorKeyManifestStore(VectorKeyManifestStore):
             msg = "vector manifest identity does not match the requested generation"
             raise ValueError(msg)
         raw_keys = manifest.get("keys")
-        if not isinstance(raw_keys, list) or not all(
-            isinstance(key, str) for key in raw_keys
-        ):
+        if not isinstance(raw_keys, list) or not all(isinstance(key, str) for key in raw_keys):
             msg = "vector manifest keys are invalid"
             raise ValueError(msg)
         return tuple(cast(str, key) for key in raw_keys)
@@ -94,18 +92,14 @@ class S3VectorKeyManifestStore(VectorKeyManifestStore):
         document_id: DocumentId,
         generation_id: str,
     ) -> None:
-        await self._store.delete_key(
-            self._manifest_key(tenant_id, document_id, generation_id)
-        )
+        await self._store.delete_key(self._manifest_key(tenant_id, document_id, generation_id))
 
     async def list_document_generations(
         self,
         tenant_id: TenantId,
         document_id: DocumentId,
     ) -> tuple[str, ...]:
-        prefix = (
-            self._store.key("vector-manifests", str(tenant_id), str(document_id)) + "/"
-        )
+        prefix = self._store.key("vector-manifests", str(tenant_id), str(document_id)) + "/"
         manifest_keys = await self._store.list_keys(prefix)
         return tuple(_decode_component(key.rsplit("/", 1)[-1]) for key in manifest_keys)
 

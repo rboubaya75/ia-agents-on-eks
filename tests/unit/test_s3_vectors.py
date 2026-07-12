@@ -120,9 +120,7 @@ def _repository() -> tuple[
 
 
 @pytest.mark.asyncio
-async def test_vector_manifest_precedes_write_and_supports_failed_write_cleanup() -> (
-    None
-):
+async def test_vector_manifest_precedes_write_and_supports_failed_write_cleanup() -> None:
     repository, client, manifests = _repository()
     client.fail_put = True
     with pytest.raises(RuntimeError, match="put failed"):
@@ -198,6 +196,4 @@ async def test_query_requires_and_filters_authoritative_active_generations() -> 
 async def test_vector_records_require_immutable_model_metadata() -> None:
     repository, _, _ = _repository()
     with pytest.raises(ValueError, match="immutable"):
-        await repository.upsert(
-            (_record().model_copy(update={"embedding_model_id": None}),)
-        )
+        await repository.upsert((_record().model_copy(update={"embedding_model_id": None}),))

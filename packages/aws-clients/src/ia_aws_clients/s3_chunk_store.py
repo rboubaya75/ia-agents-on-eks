@@ -145,9 +145,7 @@ class S3ChunkStore(ChunkStore):
             async with semaphore:
                 await self._store.put_json(key, _chunk_payload(chunk))
 
-        await asyncio.gather(
-            *(put(chunk, key) for chunk, key in zip(chunks, keys, strict=True))
-        )
+        await asyncio.gather(*(put(chunk, key) for chunk, key in zip(chunks, keys, strict=True)))
 
     async def get(
         self,
@@ -174,9 +172,7 @@ class S3ChunkStore(ChunkStore):
         tenant_id: TenantId,
         document_id: DocumentId,
     ) -> None:
-        prefix = (
-            self._store.key("chunk-manifests", str(tenant_id), str(document_id)) + "/"
-        )
+        prefix = self._store.key("chunk-manifests", str(tenant_id), str(document_id)) + "/"
         manifest_keys = await self._store.list_keys(prefix)
         for manifest_key in manifest_keys:
             generation_component = manifest_key.rsplit("/", 1)[-1]
@@ -201,9 +197,7 @@ class S3ChunkStore(ChunkStore):
                 msg = "chunk manifest identity does not match the requested generation"
                 raise ValueError(msg)
             raw_keys = manifest.get("keys")
-            if not isinstance(raw_keys, list) or not all(
-                isinstance(key, str) for key in raw_keys
-            ):
+            if not isinstance(raw_keys, list) or not all(isinstance(key, str) for key in raw_keys):
                 msg = "chunk manifest keys are invalid"
                 raise ValueError(msg)
             keys = tuple(cast(str, key) for key in raw_keys)

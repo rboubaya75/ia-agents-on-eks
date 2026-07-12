@@ -63,8 +63,7 @@ class RecordingControlTable:
                 raise DynamoConditionFailedError("condition")
             if "#revision = :expected" in condition_expression and (
                 current is None
-                or current.get("revision")
-                != (expression_attribute_values or {}).get(":expected")
+                or current.get("revision") != (expression_attribute_values or {}).get(":expected")
             ):
                 raise DynamoConditionFailedError("condition")
         self.items[key] = dict(item)
@@ -195,9 +194,7 @@ async def test_document_repository_uses_optimistic_revision() -> None:
     )
 
     assert updated.revision == 1
-    assert (
-        await repository.get(TenantId("tenant-a"), DocumentId("document-a")) == updated
-    )
+    assert await repository.get(TenantId("tenant-a"), DocumentId("document-a")) == updated
     assert await repository.get(TenantId("tenant-b"), DocumentId("document-a")) is None
 
 
@@ -227,14 +224,14 @@ async def test_lease_adapter_returns_fenced_lease() -> None:
         tenant_id=TenantId("tenant-a"),
         document_id=DocumentId("document-a"),
         source_version="v1",
-        owner_token="job-a",
+        owner_token="job-a",  # noqa: S106
         expires_at=NOW + timedelta(minutes=5),
         now=NOW,
     )
 
     assert claim.acquired is True
     assert claim.lease.fencing_token == 1
-    assert claim.lease.owner_token == "job-a"
+    assert claim.lease.owner_token == "job-a"  # noqa: S105
 
 
 @pytest.mark.asyncio

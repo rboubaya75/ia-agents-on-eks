@@ -71,9 +71,7 @@ class DynamoDocumentIngestionLeaseRepository(DocumentIngestionLeaseRepository):
             blocked_item = await self._table.get_item(key)
             if blocked_item is None:
                 raise RepositoryConflictError("lease acquisition conflicted") from None
-            return IngestionLeaseClaim(
-                lease=_decode_lease(blocked_item), acquired=False
-            )
+            return IngestionLeaseClaim(lease=_decode_lease(blocked_item), acquired=False)
         return IngestionLeaseClaim(lease=_decode_lease(updated), acquired=True)
 
     async def release(self, lease: IngestionLease) -> None:

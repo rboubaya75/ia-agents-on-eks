@@ -1,5 +1,4 @@
 import hashlib
-
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -95,9 +94,7 @@ def _iso(value: datetime) -> str:
     if value.tzinfo is None or value.utcoffset() is None:
         msg = "timestamp must include a timezone"
         raise ValueError(msg)
-    return (
-        value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
-    )
+    return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _datetime(value: object, field_name: str) -> datetime:
@@ -191,15 +188,11 @@ def _decode_document(item: Mapping[str, object]) -> Document:
         source_checksum=_string(item.get("sourceChecksum"), "sourceChecksum"),
         content_type=_string(item.get("contentType"), "contentType"),
         language=_string(item.get("language"), "language"),
-        classification=Classification(
-            _string(item.get("classification"), "classification")
-        ),
+        classification=Classification(_string(item.get("classification"), "classification")),
         allowed_roles=_roles(item.get("allowedRoles")),
         status=DocumentStatus(_string(item.get("status"), "status")),
         revision=_integer(item.get("revision"), "revision"),
-        active_generation_id=_optional_string(
-            item.get("activeGenerationId"), "activeGenerationId"
-        ),
+        active_generation_id=_optional_string(item.get("activeGenerationId"), "activeGenerationId"),
         active_index_fingerprint=_optional_string(
             item.get("activeIndexFingerprint"), "activeIndexFingerprint"
         ),
@@ -267,12 +260,8 @@ def _decode_job(item: Mapping[str, object]) -> IngestionJob:
         embedding_dimensions=_optional_integer(
             item.get("embeddingDimensions"), "embeddingDimensions"
         ),
-        chunking_version=_optional_string(
-            item.get("chunkingVersion"), "chunkingVersion"
-        ),
-        pipeline_version=_optional_string(
-            item.get("pipelineVersion"), "pipelineVersion"
-        ),
+        chunking_version=_optional_string(item.get("chunkingVersion"), "chunkingVersion"),
+        pipeline_version=_optional_string(item.get("pipelineVersion"), "pipelineVersion"),
         fencing_token=_optional_integer(item.get("fencingToken"), "fencingToken"),
         started_at=_datetime(item.get("startedAt"), "startedAt"),
         completed_at=_optional_datetime(item.get("completedAt"), "completedAt"),
@@ -302,13 +291,9 @@ def _generation_item(generation: IndexGeneration) -> PythonItem:
             "chunkCount": generation.chunk_count,
             "vectorCount": generation.vector_count,
             "createdAt": _iso(generation.created_at),
-            "readyAt": None
-            if generation.ready_at is None
-            else _iso(generation.ready_at),
+            "readyAt": None if generation.ready_at is None else _iso(generation.ready_at),
             "activatedAt": (
-                None
-                if generation.activated_at is None
-                else _iso(generation.activated_at)
+                None if generation.activated_at is None else _iso(generation.activated_at)
             ),
         }
     )
@@ -321,16 +306,12 @@ def _decode_generation(item: Mapping[str, object]) -> IndexGeneration:
         source_version=_string(item.get("sourceVersion"), "sourceVersion"),
         generation_id=_string(item.get("generationId"), "generationId"),
         fingerprint=_string(item.get("fingerprint"), "fingerprint"),
-        authorization_checksum=_string(
-            item.get("authorizationChecksum"), "authorizationChecksum"
-        ),
+        authorization_checksum=_string(item.get("authorizationChecksum"), "authorizationChecksum"),
         embedding_profile_revision=_string(
             item.get("embeddingProfileRevision"), "embeddingProfileRevision"
         ),
         embedding_model_id=_string(item.get("embeddingModelId"), "embeddingModelId"),
-        embedding_dimensions=_integer(
-            item.get("embeddingDimensions"), "embeddingDimensions"
-        ),
+        embedding_dimensions=_integer(item.get("embeddingDimensions"), "embeddingDimensions"),
         status=IndexGenerationStatus(_string(item.get("status"), "status")),
         fencing_token=_integer(item.get("fencingToken"), "fencingToken"),
         chunk_count=_integer(item.get("chunkCount"), "chunkCount"),

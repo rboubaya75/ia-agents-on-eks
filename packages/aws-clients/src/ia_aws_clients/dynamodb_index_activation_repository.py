@@ -82,9 +82,7 @@ class DynamoIndexActivationRepository(IndexActivationRepository):
                 ),
             )
         except DynamoConditionFailedError as error:
-            raise RepositoryConflictError(
-                "index activation conditions were rejected"
-            ) from error
+            raise RepositoryConflictError("index activation conditions were rejected") from error
         return activated
 
     @staticmethod
@@ -196,9 +194,7 @@ class DynamoIndexActivationRepository(IndexActivationRepository):
             },
             {
                 "Update": {
-                    "Key": _fingerprint_key(
-                        generation.tenant_id, generation.fingerprint
-                    ),
+                    "Key": _fingerprint_key(generation.tenant_id, generation.fingerprint),
                     "UpdateExpression": "SET #status = :succeeded",
                     "ConditionExpression": "jobId = :job AND fencingToken = :fencing",
                     "ExpressionAttributeNames": {"#status": "status"},

@@ -22,9 +22,7 @@ class DynamoIndexGenerationRepository(IndexGenerationRepository):
         document_id: DocumentId,
         generation_id: str,
     ) -> IndexGeneration | None:
-        item = await self._table.get_item(
-            _generation_key(tenant_id, document_id, generation_id)
-        )
+        item = await self._table.get_item(_generation_key(tenant_id, document_id, generation_id))
         if item is None:
             return None
         generation = _decode_generation(item)

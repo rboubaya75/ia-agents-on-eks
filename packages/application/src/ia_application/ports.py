@@ -79,9 +79,7 @@ class ExtractedDocument(StrictModel):
     tenant_id: Annotated[TenantId, Field(min_length=1, max_length=128)]
     document_id: Annotated[DocumentId, Field(min_length=1, max_length=128)]
     source_version: Annotated[str, Field(min_length=1, max_length=128)]
-    sections: Annotated[
-        tuple[ExtractedSection, ...], Field(min_length=1, max_length=10_000)
-    ]
+    sections: Annotated[tuple[ExtractedSection, ...], Field(min_length=1, max_length=10_000)]
 
 
 class IngestionJobClaim(StrictModel):
@@ -115,17 +113,13 @@ class VectorRecord(StrictModel):
     tenant_id: Annotated[TenantId, Field(min_length=1, max_length=128)]
     document_id: Annotated[DocumentId, Field(min_length=1, max_length=128)]
     chunk_id: Annotated[ChunkId, Field(min_length=1, max_length=128)]
-    generation_id: Annotated[str, Field(min_length=1, max_length=128)] = (
-        "legacy-generation"
-    )
+    generation_id: Annotated[str, Field(min_length=1, max_length=128)] = "legacy-generation"
     classification: Classification
     allowed_roles: Annotated[frozenset[Role], Field(min_length=1)]
     source_version: Annotated[str, Field(min_length=1, max_length=128)]
     checksum: Annotated[str, Field(min_length=32, max_length=128)]
     vector: Annotated[tuple[float, ...], Field(min_length=1, max_length=4096)]
-    embedding_model_id: Annotated[str, Field(min_length=1, max_length=300)] | None = (
-        None
-    )
+    embedding_model_id: Annotated[str, Field(min_length=1, max_length=300)] | None = None
     embedding_dimensions: Annotated[int, Field(ge=1, le=4096)] | None = None
     pipeline_version: Annotated[str, Field(min_length=1, max_length=128)] | None = None
 
@@ -143,9 +137,7 @@ class VectorMatch(StrictModel):
     tenant_id: Annotated[TenantId, Field(min_length=1, max_length=128)]
     document_id: Annotated[DocumentId, Field(min_length=1, max_length=128)]
     chunk_id: Annotated[ChunkId, Field(min_length=1, max_length=128)]
-    generation_id: Annotated[str, Field(min_length=1, max_length=128)] = (
-        "legacy-generation"
-    )
+    generation_id: Annotated[str, Field(min_length=1, max_length=128)] = "legacy-generation"
     score: Annotated[float, Field(ge=0.0, le=1.0)]
 
 
@@ -185,9 +177,7 @@ class ChunkingStrategy(Protocol):
 class VectorRepository(Protocol):
     async def upsert(self, records: Sequence[VectorRecord]) -> None: ...
 
-    async def delete_document(
-        self, tenant_id: TenantId, document_id: DocumentId
-    ) -> None: ...
+    async def delete_document(self, tenant_id: TenantId, document_id: DocumentId) -> None: ...
 
     async def delete_generation(
         self,
@@ -210,9 +200,7 @@ class ChunkStore(Protocol):
         chunk_id: ChunkId,
     ) -> DocumentChunk | None: ...
 
-    async def delete_document(
-        self, tenant_id: TenantId, document_id: DocumentId
-    ) -> None: ...
+    async def delete_document(self, tenant_id: TenantId, document_id: DocumentId) -> None: ...
 
     async def delete_generation(
         self,
@@ -231,9 +219,7 @@ class DocumentRepository(Protocol):
         expected_revision: int | None = None,
     ) -> Document: ...
 
-    async def get(
-        self, tenant_id: TenantId, document_id: DocumentId
-    ) -> Document | None: ...
+    async def get(self, tenant_id: TenantId, document_id: DocumentId) -> Document | None: ...
 
 
 @runtime_checkable
@@ -287,9 +273,7 @@ class UserProfileRepository(Protocol):
 class ChatSessionRepository(Protocol):
     async def save(self, session: ChatSession) -> None: ...
 
-    async def get(
-        self, tenant_id: TenantId, session_id: SessionId
-    ) -> ChatSession | None: ...
+    async def get(self, tenant_id: TenantId, session_id: SessionId) -> ChatSession | None: ...
 
     async def list_for_user(
         self, tenant_id: TenantId, user_id: UserId

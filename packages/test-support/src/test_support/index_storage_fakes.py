@@ -29,9 +29,7 @@ class InMemoryVectorRepository:
             key = (record.tenant_id, record.generation_id, record.chunk_id)
             self._records[key] = record
 
-    async def delete_document(
-        self, tenant_id: TenantId, document_id: DocumentId
-    ) -> None:
+    async def delete_document(self, tenant_id: TenantId, document_id: DocumentId) -> None:
         keys = [
             key
             for key, record in self._records.items()
@@ -137,9 +135,7 @@ class InMemoryChunkStore:
     ) -> DocumentChunk | None:
         return self._chunks.get((tenant_id, generation_id, chunk_id))
 
-    async def delete_document(
-        self, tenant_id: TenantId, document_id: DocumentId
-    ) -> None:
+    async def delete_document(self, tenant_id: TenantId, document_id: DocumentId) -> None:
         keys = [
             key
             for key, chunk in self._chunks.items()
@@ -204,9 +200,7 @@ class InMemoryDocumentRepository:
         self._documents[key] = stored
         return stored
 
-    async def get(
-        self, tenant_id: TenantId, document_id: DocumentId
-    ) -> Document | None:
+    async def get(self, tenant_id: TenantId, document_id: DocumentId) -> Document | None:
         return self._documents.get((tenant_id, document_id))
 
 

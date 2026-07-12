@@ -28,14 +28,14 @@ class DynamoDocumentRepository(DocumentRepository):
                 try:
                     await self._table.put_item(
                         _document_item(document),
-                        condition_expression="attribute_not_exists(pk) AND attribute_not_exists(sk)",
+                        condition_expression=(
+                            "attribute_not_exists(pk) AND attribute_not_exists(sk)"
+                        ),
                     )
                 except DynamoConditionFailedError:
                     current = await self.get(document.tenant_id, document.document_id)
                     if current is None:
-                        raise RepositoryConflictError(
-                            "document create conflicted"
-                        ) from None
+                        raise RepositoryConflictError("document create conflicted") from None
                 else:
                     return document
             if current is None:
@@ -54,9 +54,7 @@ class DynamoDocumentRepository(DocumentRepository):
             raise RepositoryConflictError("document revision changed") from error
         return stored
 
-    async def get(
-        self, tenant_id: TenantId, document_id: DocumentId
-    ) -> Document | None:
+    async def get(self, tenant_id: TenantId, document_id: DocumentId) -> Document | None:
         item = await self._table.get_item(_document_key(tenant_id, document_id))
         if item is None:
             return None

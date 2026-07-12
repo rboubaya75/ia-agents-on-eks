@@ -70,9 +70,7 @@ class RecordingS3Client:
     def list_objects_v2(self, **kwargs: object) -> dict[str, object]:
         prefix = str(kwargs["Prefix"])
         return {
-            "Contents": [
-                {"Key": key} for key in sorted(self.objects) if key.startswith(prefix)
-            ],
+            "Contents": [{"Key": key} for key in sorted(self.objects) if key.startswith(prefix)],
             "IsTruncated": False,
         }
 
@@ -140,9 +138,7 @@ async def test_manifest_is_written_before_chunk_objects_for_rollback() -> None:
     with pytest.raises(RuntimeError, match="write failed"):
         await chunks.put_batch(values)
 
-    put_keys = [
-        str(kwargs["Key"]) for action, kwargs in client.calls if action == "put"
-    ]
+    put_keys = [str(kwargs["Key"]) for action, kwargs in client.calls if action == "put"]
     first_payload = json.loads(client.objects[put_keys[0]])
     assert isinstance(first_payload, dict)
     assert "keys" in first_payload
@@ -155,9 +151,7 @@ async def test_manifest_is_written_before_chunk_objects_for_rollback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_vector_manifest_merges_keys_and_lists_tenant_scoped_generations() -> (
-    None
-):
+async def test_vector_manifest_merges_keys_and_lists_tenant_scoped_generations() -> None:
     client = RecordingS3Client()
     manifests = S3VectorKeyManifestStore(
         S3JsonStore(cast(Boto3S3Client, client), bucket_name="bucket")

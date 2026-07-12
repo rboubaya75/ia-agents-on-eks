@@ -5,7 +5,6 @@ from typing import Protocol, cast
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer  # type: ignore[import-untyped]
 from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 
-
 type PythonItem = dict[str, object]
 type TransactionAction = dict[str, object]
 
@@ -185,9 +184,7 @@ class Boto3DynamoControlTable:
         if not actions:
             msg = "at least one transaction action is required"
             raise ValueError(msg)
-        serialized = tuple(
-            self._serialize_transaction_action(action) for action in actions
-        )
+        serialized = tuple(self._serialize_transaction_action(action) for action in actions)
         kwargs: dict[str, object] = {"TransactItems": list(serialized)}
         if client_request_token is not None:
             if not 1 <= len(client_request_token) <= 36:
@@ -203,13 +200,8 @@ class Boto3DynamoControlTable:
         except ClientError as error:
             code = str(error.response.get("Error", {}).get("Code", ""))
             if code == "ConditionalCheckFailedException":
-                raise DynamoConditionFailedError(
-                    "DynamoDB condition rejected the write"
-                ) from error
-            if (
-                code == "TransactionCanceledException"
-                and self._is_condition_cancellation(error)
-            ):
+                raise DynamoConditionFailedError("DynamoDB condition rejected the write") from error
+            if code == "TransactionCanceledException" and self._is_condition_cancellation(error):
                 raise DynamoConditionFailedError(
                     "DynamoDB transaction condition rejected the write"
                 ) from error
@@ -227,9 +219,7 @@ class Boto3DynamoControlTable:
         }
         return bool(codes) and codes.issubset({"ConditionalCheckFailed"})
 
-    def _serialize_transaction_action(
-        self, action: TransactionAction
-    ) -> TransactionAction:
+    def _serialize_transaction_action(self, action: TransactionAction) -> TransactionAction:
         if len(action) != 1:
             msg = "a transaction action must contain exactly one operation"
             raise ValueError(msg)
@@ -243,13 +233,9 @@ class Boto3DynamoControlTable:
         payload = dict(raw_payload)
         payload["TableName"] = self._table_name
         if "Item" in payload:
-            payload["Item"] = self._serialize_map(
-                cast(Mapping[str, object], payload["Item"])
-            )
+            payload["Item"] = self._serialize_map(cast(Mapping[str, object], payload["Item"]))
         if "Key" in payload:
-            payload["Key"] = self._serialize_map(
-                cast(Mapping[str, object], payload["Key"])
-            )
+            payload["Key"] = self._serialize_map(cast(Mapping[str, object], payload["Key"]))
         values = payload.get("ExpressionAttributeValues")
         if isinstance(values, Mapping):
             payload["ExpressionAttributeValues"] = self._serialize_map(
@@ -279,9 +265,7 @@ class Boto3DynamoControlTable:
         if expression_attribute_names:
             kwargs["ExpressionAttributeNames"] = dict(expression_attribute_names)
         if expression_attribute_values:
-            kwargs["ExpressionAttributeValues"] = self._serialize_map(
-                expression_attribute_values
-            )
+            kwargs["ExpressionAttributeValues"] = self._serialize_map(expression_attribute_values)
 
 
 class Boto3Operation(Protocol):

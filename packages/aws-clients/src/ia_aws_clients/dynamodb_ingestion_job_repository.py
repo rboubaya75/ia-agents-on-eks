@@ -113,9 +113,7 @@ class DynamoIngestionJobRepository(IngestionJobRepository):
         except DynamoConditionFailedError:
             existing = await self.find_by_fingerprint(job.tenant_id, job.fingerprint)
             if existing is None:
-                raise RepositoryConflictError(
-                    "ingestion fingerprint claim conflicted"
-                ) from None
+                raise RepositoryConflictError("ingestion fingerprint claim conflicted") from None
             return IngestionJobClaim(job=existing, acquired=False)
         return IngestionJobClaim(job=job, acquired=True)
 
@@ -136,10 +134,7 @@ class DynamoIngestionJobRepository(IngestionJobRepository):
         marker = await self._table.get_item(_fingerprint_key(tenant_id, fingerprint))
         if marker is None:
             return None
-        if (
-            marker.get("tenantId") != str(tenant_id)
-            or marker.get("fingerprint") != fingerprint
-        ):
+        if marker.get("tenantId") != str(tenant_id) or marker.get("fingerprint") != fingerprint:
             return None
         job_id = JobId(_string(marker.get("jobId"), "jobId"))
         job = await self.get(tenant_id, job_id)

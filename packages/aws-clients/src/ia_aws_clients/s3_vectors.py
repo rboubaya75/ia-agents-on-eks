@@ -41,9 +41,7 @@ class S3VectorIndexSettings(BaseModel):
     def validate_index_reference(self) -> "S3VectorIndexSettings":
         by_name = self.vector_bucket_name is not None or self.index_name is not None
         if by_name and (
-            self.vector_bucket_name is None
-            or self.index_name is None
-            or self.index_arn is not None
+            self.vector_bucket_name is None or self.index_name is None or self.index_arn is not None
         ):
             msg = "configure either index_arn or both vector_bucket_name and index_name"
             raise ValueError(msg)
@@ -91,14 +89,10 @@ class S3VectorRepository(VectorRepository):
         )
 
     async def upsert(self, records: Sequence[VectorRecord]) -> None:
-        grouped: dict[tuple[TenantId, DocumentId, str], list[VectorRecord]] = (
-            defaultdict(list)
-        )
+        grouped: dict[tuple[TenantId, DocumentId, str], list[VectorRecord]] = defaultdict(list)
         for record in records:
             self._validate_record(record)
-            grouped[
-                (record.tenant_id, record.document_id, record.generation_id)
-            ].append(record)
+            grouped[(record.tenant_id, record.document_id, record.generation_id)].append(record)
         for (tenant_id, document_id, generation_id), group in grouped.items():
             await self._upsert_generation(
                 tenant_id,
@@ -234,21 +228,11 @@ class S3VectorRepository(VectorRepository):
                 {"tenantId": {"$eq": str(query.tenant_id)}},
                 {
                     "classification": {
-                        "$in": sorted(
-                            value.value for value in query.allowed_classifications
-                        )
+                        "$in": sorted(value.value for value in query.allowed_classifications)
                     }
                 },
-                {
-                    "allowedRoles": {
-                        "$in": sorted(role.value for role in query.allowed_roles)
-                    }
-                },
-                {
-                    "generationId": {
-                        "$in": sorted(query.allowed_generation_ids or frozenset())
-                    }
-                },
+                {"allowedRoles": {"$in": sorted(role.value for role in query.allowed_roles)}},
+                {"generationId": {"$in": sorted(query.allowed_generation_ids or frozenset())}},
             ]
         }
 
@@ -270,9 +254,7 @@ class S3VectorRepository(VectorRepository):
         document_id = DocumentId(_required_metadata_string(metadata, "documentId"))
         chunk_id = ChunkId(_required_metadata_string(metadata, "chunkId"))
         generation_id = _required_metadata_string(metadata, "generationId")
-        classification = Classification(
-            _required_metadata_string(metadata, "classification")
-        )
+        classification = Classification(_required_metadata_string(metadata, "classification"))
         raw_roles = metadata.get("allowedRoles")
         if not isinstance(raw_roles, list):
             msg = "S3 Vectors allowedRoles metadata is invalid"

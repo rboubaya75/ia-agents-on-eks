@@ -4,8 +4,8 @@ from typing import Any, cast
 import pytest
 from botocore.exceptions import ClientError  # type: ignore[import-untyped]
 from ia_aws_clients.dynamodb_control import (
-    Boto3DynamoControlTable,
     Boto3DynamoClient,
+    Boto3DynamoControlTable,
     DynamoConditionFailedError,
 )
 
@@ -62,7 +62,7 @@ async def test_control_table_serializes_values_and_transaction_token() -> None:
     item = await table.get_item({"pk": "tenant"})
     await table.transact_write(
         ({"Put": {"Item": {"pk": "tenant", "count": 2}}},),
-        client_request_token="stable-token",
+        client_request_token="request-token",  # noqa: S106
     )
 
     assert item is not None
@@ -70,7 +70,7 @@ async def test_control_table_serializes_values_and_transaction_token() -> None:
     assert cast(Decimal, item["count"]) == Decimal("2")
     name, kwargs = client.calls[-1]
     assert name == "transact"
-    assert kwargs["ClientRequestToken"] == "stable-token"
+    assert kwargs["ClientRequestToken"] == "request-token"
     assert kwargs["TransactItems"] == [
         {
             "Put": {
