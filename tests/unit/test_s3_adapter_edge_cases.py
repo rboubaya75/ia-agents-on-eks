@@ -413,7 +413,7 @@ def test_vector_index_settings_require_one_unambiguous_reference(
     kwargs: dict[str, object],
 ) -> None:
     with pytest.raises(ValidationError):
-        S3VectorIndexSettings(**kwargs)
+        S3VectorIndexSettings.model_validate(kwargs)
 
 
 def test_vector_index_settings_support_arn_reference() -> None:
