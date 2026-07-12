@@ -87,9 +87,7 @@ class EdgeS3Client:
             return self.pages.pop(0)
         prefix = str(kwargs["Prefix"])
         return {
-            "Contents": [
-                {"Key": key} for key in sorted(self.objects) if key.startswith(prefix)
-            ],
+            "Contents": [{"Key": key} for key in sorted(self.objects) if key.startswith(prefix)],
             "IsTruncated": False,
         }
 
@@ -363,9 +361,7 @@ async def test_vector_manifest_rejects_invalid_payloads_and_deletes() -> None:
 
     await store.put_json(key, ["invalid"])
     with pytest.raises(ValueError, match="JSON object"):
-        await manifests.load_keys(
-            TenantId("tenant-a"), DocumentId("document-a"), "generation-a"
-        )
+        await manifests.load_keys(TenantId("tenant-a"), DocumentId("document-a"), "generation-a")
 
     await store.put_json(
         key,
@@ -377,9 +373,7 @@ async def test_vector_manifest_rejects_invalid_payloads_and_deletes() -> None:
         },
     )
     with pytest.raises(ValueError, match="identity"):
-        await manifests.load_keys(
-            TenantId("tenant-a"), DocumentId("document-a"), "generation-a"
-        )
+        await manifests.load_keys(TenantId("tenant-a"), DocumentId("document-a"), "generation-a")
 
     await store.put_json(
         key,
@@ -391,17 +385,13 @@ async def test_vector_manifest_rejects_invalid_payloads_and_deletes() -> None:
         },
     )
     with pytest.raises(ValueError, match="keys"):
-        await manifests.load_keys(
-            TenantId("tenant-a"), DocumentId("document-a"), "generation-a"
-        )
+        await manifests.load_keys(TenantId("tenant-a"), DocumentId("document-a"), "generation-a")
 
     await manifests.delete_generation(
         TenantId("tenant-a"), DocumentId("document-a"), "generation-a"
     )
     assert (
-        await manifests.load_keys(
-            TenantId("tenant-a"), DocumentId("document-a"), "generation-a"
-        )
+        await manifests.load_keys(TenantId("tenant-a"), DocumentId("document-a"), "generation-a")
         == ()
     )
 
