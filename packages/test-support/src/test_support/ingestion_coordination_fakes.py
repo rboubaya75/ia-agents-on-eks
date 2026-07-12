@@ -136,7 +136,7 @@ class InMemoryIndexActivationRepository:
             raise RepositoryConflictError("stale ingestion fencing token")
         if (
             succeeded_job.generation_id != generation.generation_id
-            or succeed_job.fingerprint != generation.fingerprint
+            or succeeded_job.fingerprint != generation.fingerprint
             or succeeded_job.status is not IngestionStatus.SUCCEEDED
         ):
             raise RepositoryConflictError("activation metadata is inconsistent")
