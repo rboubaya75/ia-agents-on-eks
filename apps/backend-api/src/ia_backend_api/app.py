@@ -103,20 +103,52 @@ def _ensure_document_readable(principal: Principal, document: Document) -> None:
 
 def _document_api_error(error: Exception) -> ApiError:
     if isinstance(error, ManagedDocumentNotFoundError):
-        return ApiError(404, "document_not_found", "The document was not found.")
+        return ApiError(
+            status_code=404,
+            code="document_not_found",
+            message="The document was not found.",
+        )
     if isinstance(error, UnsupportedDocumentContentTypeError):
-        return ApiError(415, "unsupported_document_type", str(error))
+        return ApiError(
+            status_code=415,
+            code="unsupported_document_type",
+            message=str(error),
+        )
     if isinstance(error, InvalidDocumentSourceError | FileNotFoundError):
-        return ApiError(409, "invalid_document_source", str(error))
+        return ApiError(
+            status_code=409,
+            code="invalid_document_source",
+            message=str(error),
+        )
     if isinstance(error, DocumentStateConflictError):
-        return ApiError(409, "document_state_conflict", str(error))
+        return ApiError(
+            status_code=409,
+            code="document_state_conflict",
+            message=str(error),
+        )
     if isinstance(error, DocumentDeletionError):
-        return ApiError(503, "document_deletion_incomplete", str(error))
+        return ApiError(
+            status_code=503,
+            code="document_deletion_incomplete",
+            message=str(error),
+        )
     if isinstance(error, IngestionError):
-        return ApiError(409, "document_ingestion_failed", str(error))
+        return ApiError(
+            status_code=409,
+            code="document_ingestion_failed",
+            message=str(error),
+        )
     if isinstance(error, DocumentManagementError):
-        return ApiError(400, "document_operation_failed", str(error))
-    return ApiError(500, "internal_error", "An unexpected error occurred.")
+        return ApiError(
+            status_code=400,
+            code="document_operation_failed",
+            message=str(error),
+        )
+    return ApiError(
+        status_code=500,
+        code="internal_error",
+        message="An unexpected error occurred.",
+    )
 
 
 def create_app(container: AppContainer) -> FastAPI:
