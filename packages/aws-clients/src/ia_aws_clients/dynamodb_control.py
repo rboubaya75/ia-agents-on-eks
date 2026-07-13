@@ -1,4 +1,7 @@
 import asyncio
+import base64
+import hashlib
+import json
 from collections.abc import Mapping, Sequence
 from typing import Protocol, cast
 
@@ -65,6 +68,47 @@ class DynamoControlTable(Protocol):
         *,
         client_request_token: str | None = None,
     ) -> None: ...
+
+
+def transaction_payload_token(
+    *,
+    namespace: str,
+    table_name: str,
+    actions: Sequence[TransactionAction],
+) -> str:
+    """Build a deterministic DynamoDB idempotency token from the full request payload."""
+    if not namespace:
+        msg = "transaction token namespace must not be empty"
+        raise ValueError(msg)
+    if not table_name:
+        msg = "transaction token table_name must not be empty"
+        raise ValueError(msg)
+    if not actions:
+        msg = "transaction token actions must not be empty"
+        raise ValueError(msg)
+
+    serializer = TypeSerializer()
+    serialized = [
+        _serialize_transaction_action_for_table(
+            serializer=serializer,
+            table_name=table_name,
+            action=action,
+        )
+        for action in actions
+    ]
+    canonical_payload = _canonical_json_value(
+        {
+            "namespace": namespace,
+            "TransactItems": serialized,
+        }
+    )
+    material = json.dumps(
+        canonical_payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(material).hexdigest()[:36]
 
 
 class Boto3DynamoControlTable:
@@ -220,31 +264,14 @@ class Boto3DynamoControlTable:
         return bool(codes) and codes.issubset({"ConditionalCheckFailed"})
 
     def _serialize_transaction_action(self, action: TransactionAction) -> TransactionAction:
-        if len(action) != 1:
-            msg = "a transaction action must contain exactly one operation"
-            raise ValueError(msg)
-        operation_name, raw_payload = next(iter(action.items()))
-        if operation_name not in {"Put", "Update", "Delete", "ConditionCheck"}:
-            msg = f"unsupported transaction action: {operation_name}"
-            raise ValueError(msg)
-        if not isinstance(raw_payload, Mapping):
-            msg = "transaction action payload must be a mapping"
-            raise TypeError(msg)
-        payload = dict(raw_payload)
-        payload["TableName"] = self._table_name
-        if "Item" in payload:
-            payload["Item"] = self._serialize_map(cast(Mapping[str, object], payload["Item"]))
-        if "Key" in payload:
-            payload["Key"] = self._serialize_map(cast(Mapping[str, object], payload["Key"]))
-        values = payload.get("ExpressionAttributeValues")
-        if isinstance(values, Mapping):
-            payload["ExpressionAttributeValues"] = self._serialize_map(
-                cast(Mapping[str, object], values)
-            )
-        return {operation_name: payload}
+        return _serialize_transaction_action_for_table(
+            serializer=self._serializer,
+            table_name=self._table_name,
+            action=action,
+        )
 
     def _serialize_map(self, value: Mapping[str, object]) -> dict[str, object]:
-        return {key: self._serializer.serialize(item) for key, item in value.items()}
+        return _serialize_map(self._serializer, value)
 
     def _deserialize_map(self, value: Mapping[str, object]) -> PythonItem:
         return {
@@ -266,6 +293,80 @@ class Boto3DynamoControlTable:
             kwargs["ExpressionAttributeNames"] = dict(expression_attribute_names)
         if expression_attribute_values:
             kwargs["ExpressionAttributeValues"] = self._serialize_map(expression_attribute_values)
+
+
+def _serialize_transaction_action_for_table(
+    *,
+    serializer: TypeSerializer,
+    table_name: str,
+    action: TransactionAction,
+) -> TransactionAction:
+    if len(action) != 1:
+        msg = "a transaction action must contain exactly one operation"
+        raise ValueError(msg)
+    operation_name, raw_payload = next(iter(action.items()))
+    if operation_name not in {"Put", "Update", "Delete", "ConditionCheck"}:
+        msg = f"unsupported transaction action: {operation_name}"
+        raise ValueError(msg)
+    if not isinstance(raw_payload, Mapping):
+        msg = "transaction action payload must be a mapping"
+        raise TypeError(msg)
+    payload = dict(raw_payload)
+    payload["TableName"] = table_name
+    if "Item" in payload:
+        payload["Item"] = _serialize_map(
+            serializer,
+            cast(Mapping[str, object], payload["Item"]),
+        )
+    if "Key" in payload:
+        payload["Key"] = _serialize_map(
+            serializer,
+            cast(Mapping[str, object], payload["Key"]),
+        )
+    values = payload.get("ExpressionAttributeValues")
+    if isinstance(values, Mapping):
+        payload["ExpressionAttributeValues"] = _serialize_map(
+            serializer,
+            cast(Mapping[str, object], values),
+        )
+    return {operation_name: payload}
+
+
+def _serialize_map(
+    serializer: TypeSerializer,
+    value: Mapping[str, object],
+) -> dict[str, object]:
+    return {key: serializer.serialize(item) for key, item in value.items()}
+
+
+def _canonical_json_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        items: list[tuple[str, object]] = []
+        for raw_key, raw_value in value.items():
+            if not isinstance(raw_key, str):
+                msg = "canonical transaction payload keys must be strings"
+                raise TypeError(msg)
+            canonical_value = _canonical_json_value(raw_value)
+            if raw_key in {"SS", "NS", "BS"} and isinstance(canonical_value, list):
+                canonical_value = sorted(
+                    canonical_value,
+                    key=lambda item: json.dumps(
+                        item,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                )
+            items.append((raw_key, canonical_value))
+        return {key: item for key, item in sorted(items)}
+    if isinstance(value, (list, tuple)):
+        return [_canonical_json_value(item) for item in value]
+    if isinstance(value, (bytes, bytearray)):
+        return {"$binary": base64.b64encode(bytes(value)).decode("ascii")}
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    msg = f"unsupported canonical transaction value: {type(value).__name__}"
+    raise TypeError(msg)
 
 
 class Boto3Operation(Protocol):
