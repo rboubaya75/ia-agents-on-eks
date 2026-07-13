@@ -1,7 +1,21 @@
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request, status
-from ia_domain import SessionId
+from ia_application import (
+    CreateSourceUploadCommand,
+    DocumentDeletionError,
+    DocumentManagement,
+    DocumentManagementError,
+    DocumentStateConflictError,
+    IngestionError,
+    InvalidDocumentSourceError,
+    ManagedDocumentNotFoundError,
+    RegisterDocumentCommand,
+    StartDocumentIngestionCommand,
+    UnsupportedDocumentContentTypeError,
+)
+from ia_domain import Classification, Document, DocumentId, JobId, Role, SessionId
 from ia_security import Principal
 
 from ia_backend_api.auth import ensure_scopes, get_container, get_principal
@@ -9,15 +23,33 @@ from ia_backend_api.container import AppContainer
 from ia_backend_api.errors import ApiError, install_exception_handlers
 from ia_backend_api.middleware import install_request_context_middleware
 from ia_backend_api.schemas import (
+    CreateDocumentRequest,
     CreateSessionRequest,
+    CreateUploadRequest,
+    DeleteDocumentResponse,
     DeleteSessionResponse,
+    DocumentResponse,
+    DocumentView,
     HealthResponse,
+    IngestionJobResponse,
+    IngestionJobView,
     MeResponse,
     SessionListResponse,
     SessionResponse,
     SessionView,
+    SourceUploadResponse,
+    SourceUploadView,
+    StartIngestionRequest,
 )
 from ia_backend_api.sessions import ChatSessionService
+
+_CLASSIFICATION_RANK = {
+    Classification.PUBLIC: 0,
+    Classification.INTERNAL: 1,
+    Classification.CONFIDENTIAL: 2,
+    Classification.RESTRICTED: 3,
+}
+_DOCUMENT_MANAGERS = frozenset({Role.TENANT_ADMIN, Role.PLATFORM_ADMIN})
 
 
 def _request_id(request: Request) -> str:
@@ -28,10 +60,70 @@ def _trace_id(request: Request) -> str:
     return str(request.state.trace_id)
 
 
+def _document_service(container: AppContainer) -> DocumentManagement:
+    if container.documents is None:
+        raise ApiError(
+            status_code=503,
+            code="document_service_unavailable",
+            message="The document service is not configured.",
+        )
+    return container.documents
+
+
+def _ensure_document_manager(principal: Principal) -> None:
+    if principal.roles.isdisjoint(_DOCUMENT_MANAGERS):
+        raise ApiError(
+            status_code=403,
+            code="document_management_forbidden",
+            message="A document administrator role is required.",
+        )
+
+
+def _ensure_classification_allowed(
+    principal: Principal, classification: Classification
+) -> None:
+    if _CLASSIFICATION_RANK[classification] > _CLASSIFICATION_RANK[
+        principal.maximum_classification
+    ]:
+        raise ApiError(
+            status_code=403,
+            code="classification_forbidden",
+            message="The requested document classification is not permitted.",
+        )
+
+
+def _ensure_document_readable(principal: Principal, document: Document) -> None:
+    _ensure_classification_allowed(principal, document.classification)
+    if principal.roles.isdisjoint(document.allowed_roles | _DOCUMENT_MANAGERS):
+        raise ApiError(
+            status_code=404,
+            code="document_not_found",
+            message="The document was not found.",
+        )
+
+
+def _document_api_error(error: Exception) -> ApiError:
+    if isinstance(error, ManagedDocumentNotFoundError):
+        return ApiError(404, "document_not_found", "The document was not found.")
+    if isinstance(error, UnsupportedDocumentContentTypeError):
+        return ApiError(415, "unsupported_document_type", str(error))
+    if isinstance(error, InvalidDocumentSourceError | FileNotFoundError):
+        return ApiError(409, "invalid_document_source", str(error))
+    if isinstance(error, DocumentStateConflictError):
+        return ApiError(409, "document_state_conflict", str(error))
+    if isinstance(error, DocumentDeletionError):
+        return ApiError(503, "document_deletion_incomplete", str(error))
+    if isinstance(error, IngestionError):
+        return ApiError(409, "document_ingestion_failed", str(error))
+    if isinstance(error, DocumentManagementError):
+        return ApiError(400, "document_operation_failed", str(error))
+    return ApiError(500, "internal_error", "An unexpected error occurred.")
+
+
 def create_app(container: AppContainer) -> FastAPI:
     app = FastAPI(
         title="IA Agents Platform API",
-        version="0.2.0",
+        version="0.3.0",
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
         redoc_url=None,
@@ -176,6 +268,189 @@ def create_app(container: AppContainer) -> FastAPI:
             request_id=_request_id(request),
             trace_id=_trace_id(request),
             session_id=session_id,
+            deleted=True,
+        )
+
+    @app.post(
+        "/api/v1/documents",
+        response_model=DocumentResponse,
+        status_code=status.HTTP_201_CREATED,
+        tags=["documents"],
+    )
+    async def create_document(
+        payload: CreateDocumentRequest,
+        request: Request,
+        principal: Annotated[Principal, Depends(get_principal)],
+        dependencies: Annotated[AppContainer, Depends(get_container)],
+    ) -> DocumentResponse:
+        ensure_scopes(principal, {dependencies.scopes.document_write})
+        _ensure_document_manager(principal)
+        _ensure_classification_allowed(principal, payload.classification)
+        try:
+            document = await _document_service(dependencies).register(
+                RegisterDocumentCommand(
+                    tenant_id=principal.tenant_id,
+                    owner_user_id=principal.user_id,
+                    document_id=DocumentId(dependencies.new_id()),
+                    title=payload.title,
+                    source_checksum=payload.source_checksum,
+                    content_type=payload.content_type,
+                    language=payload.language,
+                    classification=payload.classification,
+                    allowed_roles=payload.allowed_roles,
+                )
+            )
+        except Exception as error:
+            raise _document_api_error(error) from error
+        return DocumentResponse(
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+            document=DocumentView.from_domain(document),
+        )
+
+    @app.post(
+        "/api/v1/documents/{document_id}/upload-url",
+        response_model=SourceUploadResponse,
+        tags=["documents"],
+    )
+    async def create_document_upload(
+        document_id: str,
+        payload: CreateUploadRequest,
+        request: Request,
+        principal: Annotated[Principal, Depends(get_principal)],
+        dependencies: Annotated[AppContainer, Depends(get_container)],
+    ) -> SourceUploadResponse:
+        ensure_scopes(principal, {dependencies.scopes.document_write})
+        _ensure_document_manager(principal)
+        try:
+            upload = await _document_service(dependencies).create_upload(
+                CreateSourceUploadCommand(
+                    tenant_id=principal.tenant_id,
+                    document_id=DocumentId(document_id),
+                    size_bytes=payload.size_bytes,
+                    expires_at=dependencies.now()
+                    + timedelta(seconds=payload.expires_in_seconds),
+                )
+            )
+        except Exception as error:
+            raise _document_api_error(error) from error
+        return SourceUploadResponse(
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+            document_id=document_id,
+            upload=SourceUploadView.from_application(upload),
+        )
+
+    @app.get(
+        "/api/v1/documents/{document_id}",
+        response_model=DocumentResponse,
+        tags=["documents"],
+    )
+    async def get_document(
+        document_id: str,
+        request: Request,
+        principal: Annotated[Principal, Depends(get_principal)],
+        dependencies: Annotated[AppContainer, Depends(get_container)],
+    ) -> DocumentResponse:
+        ensure_scopes(principal, {dependencies.scopes.document_read})
+        try:
+            document = await _document_service(dependencies).get_document(
+                principal.tenant_id, DocumentId(document_id)
+            )
+            _ensure_document_readable(principal, document)
+        except ApiError:
+            raise
+        except Exception as error:
+            raise _document_api_error(error) from error
+        return DocumentResponse(
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+            document=DocumentView.from_domain(document),
+        )
+
+    @app.post(
+        "/api/v1/documents/{document_id}/ingestions",
+        response_model=IngestionJobResponse,
+        tags=["documents"],
+    )
+    async def start_document_ingestion(
+        document_id: str,
+        payload: StartIngestionRequest,
+        request: Request,
+        principal: Annotated[Principal, Depends(get_principal)],
+        dependencies: Annotated[AppContainer, Depends(get_container)],
+    ) -> IngestionJobResponse:
+        ensure_scopes(principal, {dependencies.scopes.document_write})
+        _ensure_document_manager(principal)
+        try:
+            job = await _document_service(dependencies).start_ingestion(
+                StartDocumentIngestionCommand(
+                    tenant_id=principal.tenant_id,
+                    document_id=DocumentId(document_id),
+                    job_id=JobId(dependencies.new_id()),
+                    embedding_model_alias=payload.embedding_model_alias,
+                    pipeline_version=payload.pipeline_version,
+                )
+            )
+        except Exception as error:
+            raise _document_api_error(error) from error
+        return IngestionJobResponse(
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+            job=IngestionJobView.from_domain(job),
+        )
+
+    @app.get(
+        "/api/v1/documents/{document_id}/ingestions/{job_id}",
+        response_model=IngestionJobResponse,
+        tags=["documents"],
+    )
+    async def get_document_ingestion(
+        document_id: str,
+        job_id: str,
+        request: Request,
+        principal: Annotated[Principal, Depends(get_principal)],
+        dependencies: Annotated[AppContainer, Depends(get_container)],
+    ) -> IngestionJobResponse:
+        ensure_scopes(principal, {dependencies.scopes.document_read})
+        try:
+            job = await _document_service(dependencies).get_job(
+                principal.tenant_id,
+                DocumentId(document_id),
+                JobId(job_id),
+            )
+        except Exception as error:
+            raise _document_api_error(error) from error
+        return IngestionJobResponse(
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+            job=IngestionJobView.from_domain(job),
+        )
+
+    @app.delete(
+        "/api/v1/documents/{document_id}",
+        response_model=DeleteDocumentResponse,
+        tags=["documents"],
+    )
+    async def delete_document(
+        document_id: str,
+        request: Request,
+        principal: Annotated[Principal, Depends(get_principal)],
+        dependencies: Annotated[AppContainer, Depends(get_container)],
+    ) -> DeleteDocumentResponse:
+        ensure_scopes(principal, {dependencies.scopes.document_write})
+        _ensure_document_manager(principal)
+        try:
+            deleted = await _document_service(dependencies).delete_document(
+                principal.tenant_id,
+                DocumentId(document_id),
+            )
+        except Exception as error:
+            raise _document_api_error(error) from error
+        return DeleteDocumentResponse(
+            request_id=_request_id(request),
+            trace_id=_trace_id(request),
+            document_id=str(deleted.document_id),
             deleted=True,
         )
 
