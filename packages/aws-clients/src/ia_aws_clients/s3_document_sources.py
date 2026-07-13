@@ -17,6 +17,8 @@ from ia_aws_clients.s3_json_store import (
     _aws_error_code,
 )
 
+_MAX_UPLOAD_TTL_SECONDS = 900
+
 
 class S3DocumentSourceStore(DocumentSourceStore):
     def __init__(
@@ -89,6 +91,9 @@ class S3DocumentSourceStore(DocumentSourceStore):
         ttl_seconds = int((expires_at - now).total_seconds())
         if ttl_seconds <= 0:
             msg = "source upload expiration must be in the future"
+            raise ValueError(msg)
+        if ttl_seconds > _MAX_UPLOAD_TTL_SECONDS:
+            msg = "source upload expiration exceeds 15 minutes"
             raise ValueError(msg)
         checksum_base64 = base64.b64encode(bytes.fromhex(document.source_checksum)).decode("ascii")
         params: dict[str, object] = {
