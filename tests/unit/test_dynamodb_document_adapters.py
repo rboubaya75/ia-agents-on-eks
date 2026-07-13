@@ -71,8 +71,7 @@ class RecordingControlTable:
                 raise DynamoConditionFailedError("condition")
             if "#revision = :expected" in condition_expression and (
                 current is None
-                or current.get("revision")
-                != (expression_attribute_values or {}).get(":expected")
+                or current.get("revision") != (expression_attribute_values or {}).get(":expected")
             ):
                 raise DynamoConditionFailedError("condition")
         self.items[key] = dict(item)
