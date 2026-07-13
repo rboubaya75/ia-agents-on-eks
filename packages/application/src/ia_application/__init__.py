@@ -2,6 +2,7 @@ from ia_application.chunking import ChunkingConfig, ParagraphChunker
 from ia_application.documents import (
     CreateSourceUploadCommand,
     DocumentDeletionError,
+    DocumentIngestion,
     DocumentManagement,
     DocumentManagementError,
     DocumentManagementService,
@@ -74,6 +75,7 @@ __all__ = [
     "ConcurrentDocumentUpdateError",
     "CreateSourceUploadCommand",
     "DocumentDeletionError",
+    "DocumentIngestion",
     "DocumentIngestionLeaseRepository",
     "DocumentIngestionService",
     "DocumentManagement",
