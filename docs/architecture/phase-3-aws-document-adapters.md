@@ -31,16 +31,54 @@ SK = one of:
 
 Length-prefix encoding avoids separator collisions. Every decoded entity is revalidated against the trusted tenant and requested identity.
 
+### Fenced job state
+
+Claiming a fingerprint creates the running job and the canonical fingerprint marker atomically. Later terminal-state writes also update those two items in one transaction.
+
+A terminal write is accepted only when the stored job and marker still have the same:
+
+```text
+jobId
+fingerprint
+fencingToken
+```
+
+A worker holding an older fencing token cannot overwrite a newer retry, even when both attempts reuse the same job ID.
+
 ### Atomic publication
 
 Activation uses a single DynamoDB transaction:
 
-1. conditionally advance the document revision and active-generation pointer;
-2. conditionally move the ready generation to active;
-3. conditionally move the running job to succeeded;
-4. conditionally mark the canonical fingerprint succeeded.
+1. condition-check the current document-version lease;
+2. conditionally advance the document revision and active-generation pointer;
+3. conditionally move the ready generation to active;
+4. conditionally move the running job to succeeded;
+5. conditionally mark the canonical fingerprint succeeded.
 
-Conditions verify source version, document revision, fingerprint and fencing token. A stable transaction token makes an exact retry idempotent.
+The lease check requires:
+
+```text
+expected tenant and document
+expected source version
+ownerToken == publishing jobId
+fencingToken == candidate fencing token
+expiresAt > activation timestamp
+```
+
+The remaining conditions verify source version, document revision, fingerprint and fencing token. A stale or expired worker therefore cannot publish after a newer lease has been issued.
+
+### Ambiguous transaction recovery
+
+A network or infrastructure error does not prove that `TransactWriteItems` failed. After a non-conditional activation exception, the adapter performs strongly consistent reads of:
+
+```text
+document
+generation
+ingestion job
+fingerprint marker
+```
+
+The operation is treated as successful only when all four records expose the exact committed generation, fingerprint, fencing token and terminal states. Candidate cleanup remains allowed only when this reconciliation does not show the atomic commit.
 
 ## Candidate object layout
 
@@ -117,7 +155,10 @@ Unit and contract tests cover:
 - conditional versus transient DynamoDB failures;
 - transaction idempotency tokens;
 - optimistic document revisions;
-- atomic fingerprint claims and four-item activation;
+- atomic fingerprint claims and fenced terminal-state writes;
+- active, owned and unexpired lease checks during five-item activation;
+- reconciliation after an ambiguous but committed activation;
+- propagation of ambiguous errors when no commit is visible;
 - fenced lease acquisition;
 - S3 chunk round trips and rollback manifests;
 - KMS encryption parameters;
