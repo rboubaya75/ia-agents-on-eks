@@ -33,14 +33,7 @@ class DynamoIngestionJobRepository(IngestionJobRepository):
 
         actions = self._save_actions(job)
         try:
-            await self._table.transact_write(
-                actions,
-                client_request_token=transaction_payload_token(
-                    namespace="save-ingestion-job",
-                    table_name=self._table.table_name,
-                    actions=actions,
-                ),
-            )
+            await self._table.transact_write(actions)
         except DynamoConditionFailedError as error:
             current = await self.get(job.tenant_id, job.job_id)
             if current == job:
