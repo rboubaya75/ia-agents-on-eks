@@ -23,7 +23,8 @@ The low-level DynamoDB adapter serializes values through boto3 type serializers 
 - leases use conditional expiration checks and monotonically increasing fencing tokens;
 - activation uses one five-item transaction covering a current-lease condition check, the document pointer, generation status, ingestion job and fingerprint marker;
 - activation requires the lease owner, source version, unexpired timestamp and fencing token to match the publishing job;
-- deterministic `ClientRequestToken` values make claim and activation retries idempotent;
+- claim and activation `ClientRequestToken` values are SHA-256 digests of a namespace plus the complete boto3-serialized transaction payload, including table name, item values, conditions and timestamps;
+- semantically identical payloads produce the same 36-character token regardless of mapping or DynamoDB set ordering, while any request-parameter change produces a different token and avoids `IdempotentParameterMismatch`;
 - after a non-conditional activation error, the adapter performs strongly consistent reconciliation reads and reports success when the exact atomic commit is visible;
 - candidate cleanup is permitted only when reconciliation does not show a committed activation;
 - only genuine conditional cancellations map to `RepositoryConflictError`; throttling and infrastructure failures remain visible as AWS failures.
@@ -55,6 +56,7 @@ Queries require an explicit non-empty set of authoritative active generation IDs
 - IAM policies can be scoped separately to the control table, document bucket, vector bucket/index and configured Bedrock models.
 - Activation is atomic for metadata and the authoritative lease check, while chunk/vector data is immutable and generation-scoped.
 - A stale worker cannot publish after a newer lease token has been issued or after its own lease has expired.
+- A retried transaction cannot reuse a DynamoDB idempotency token for a different serialized request payload.
 - An ambiguous activation response cannot trigger deletion of a generation whose atomic commit is visible.
 - A retriever must first resolve current active generation IDs from trusted document metadata before calling `VectorRepository.query`.
 - PDF/DOCX extraction, document upload APIs, Terraform resources and real AWS integration tests remain deferred.
