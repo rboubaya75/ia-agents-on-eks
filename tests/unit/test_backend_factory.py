@@ -3,8 +3,10 @@ from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
+from ia_application import DocumentManagement
 from ia_aws_clients import Boto3DynamoTable
-from ia_backend_api.main import create_application
+from ia_backend_api import main as backend_main
+from ia_backend_api.settings import BackendSettings
 
 
 class ReadyTable:
@@ -45,6 +47,13 @@ def test_environment_factory_wires_cognito_and_dynamodb(monkeypatch: pytest.Monk
     monkeypatch.setenv("IA_CHAT_SESSION_USER_INDEX", "tenant-user-index")
     monkeypatch.setenv("IA_CHAT_MESSAGE_TABLE", "messages")
     monkeypatch.setenv("IA_USAGE_RECORD_TABLE", "usage")
+    monkeypatch.setenv("IA_DOCUMENT_CONTROL_TABLE", "document-control")
+    monkeypatch.setenv("IA_DOCUMENT_BUCKET", "document-bucket")
+    monkeypatch.setenv("IA_VECTOR_BUCKET_NAME", "vector-bucket")
+    monkeypatch.setenv("IA_VECTOR_INDEX_NAME", "documents")
+    monkeypatch.setenv("IA_EMBEDDING_PROFILE_REVISION", "profile-v1")
+    monkeypatch.setenv("IA_EMBEDDING_MODEL_ID", "model-v1")
+    monkeypatch.setenv("IA_EMBEDDING_DIMENSIONS", "256")
     table = ReadyTable()
 
     def from_table_name(
@@ -57,9 +66,21 @@ def test_environment_factory_wires_cognito_and_dynamodb(monkeypatch: pytest.Monk
         assert table_name == "sessions"
         return cast(Boto3DynamoTable, table)
 
-    monkeypatch.setattr(Boto3DynamoTable, "from_table_name", classmethod(from_table_name))
+    document_management = cast(DocumentManagement, object())
 
-    client = TestClient(create_application())
+    def create_document_management(settings: BackendSettings) -> DocumentManagement:
+        assert settings.document_control_table == "document-control"
+        assert settings.document_bucket == "document-bucket"
+        return document_management
+
+    monkeypatch.setattr(Boto3DynamoTable, "from_table_name", classmethod(from_table_name))
+    monkeypatch.setattr(
+        backend_main,
+        "create_document_management",
+        create_document_management,
+    )
+
+    client = TestClient(backend_main.create_application())
 
     response = client.get("/api/v1/health/ready")
     assert response.status_code == 200
