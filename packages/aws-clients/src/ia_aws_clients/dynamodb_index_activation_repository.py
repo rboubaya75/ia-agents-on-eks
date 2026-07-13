@@ -14,6 +14,7 @@ from ia_aws_clients.dynamodb_control import (
     DynamoConditionFailedError,
     DynamoControlTable,
     TransactionAction,
+    transaction_payload_token,
 )
 from ia_aws_clients.dynamodb_document_codec import (
     _ENTITY_DOCUMENT,
@@ -32,7 +33,6 @@ from ia_aws_clients.dynamodb_document_codec import (
     _job_key,
     _lease_key,
     _string,
-    _transaction_token,
 )
 
 
@@ -80,12 +80,10 @@ class DynamoIndexActivationRepository(IndexActivationRepository):
         try:
             await self._table.transact_write(
                 actions,
-                client_request_token=_transaction_token(
-                    "activate",
-                    str(generation.tenant_id),
-                    str(generation.document_id),
-                    generation.generation_id,
-                    str(generation.fencing_token),
+                client_request_token=transaction_payload_token(
+                    namespace="activate-index-generation",
+                    table_name=self._table.table_name,
+                    actions=actions,
                 ),
             )
         except DynamoConditionFailedError as error:
