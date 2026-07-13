@@ -1,15 +1,14 @@
 import hashlib
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import cast
 
 import pytest
 from ia_application import (
     CreateSourceUploadCommand,
     DocumentDeletionError,
-    DocumentIngestionService,
     DocumentManagementService,
     DocumentSourceMetadata,
+    IngestDocumentCommand,
     InvalidDocumentSourceError,
     PresignedSourceUpload,
     RegisterDocumentCommand,
@@ -20,6 +19,7 @@ from ia_application import (
     VectorRecord,
 )
 from ia_domain import (
+    ChunkId,
     Classification,
     Document,
     DocumentChunk,
@@ -95,17 +95,14 @@ class FakeSourceStore:
 class FakeIngestion:
     def __init__(self, jobs: InMemoryIngestionJobRepository) -> None:
         self.jobs = jobs
-        self.command: object | None = None
+        self.command: IngestDocumentCommand | None = None
 
-    async def ingest(self, command: object) -> IngestionJob:
-        from ia_application import IngestDocumentCommand
-
-        typed = cast(IngestDocumentCommand, command)
-        self.command = typed
+    async def ingest(self, command: IngestDocumentCommand) -> IngestionJob:
+        self.command = command
         job = IngestionJob(
-            tenant_id=typed.tenant_id,
-            job_id=typed.job_id,
-            document_id=typed.document_id,
+            tenant_id=command.tenant_id,
+            job_id=command.job_id,
+            document_id=command.document_id,
             source_version=CHECKSUM,
             status=IngestionStatus.SUCCEEDED,
             started_at=NOW,
@@ -126,7 +123,7 @@ class FakeChunkStore:
         self,
         tenant_id: TenantId,
         generation_id: str,
-        chunk_id: object,
+        chunk_id: ChunkId,
     ) -> DocumentChunk | None:
         del tenant_id, generation_id, chunk_id
         return None
@@ -186,7 +183,7 @@ def _service() -> tuple[
         documents=documents,
         jobs=jobs,
         sources=sources,
-        ingestion=cast(DocumentIngestionService, ingestion),
+        ingestion=ingestion,
         chunks=chunks,
         vectors=vectors,
         max_source_bytes=1_000,
@@ -291,13 +288,21 @@ async def test_utf8_extractor_normalizes_text_and_rejects_binary_content() -> No
 
 
 @pytest.mark.asyncio
-async def test_partial_deletion_leaves_recoverable_deleting_state() -> None:
-    service, documents, _, sources, _, _ = _service()
+async def test_partial_deletion_can_be_retried_to_tombstone() -> None:
+    service, documents, _, sources, chunks, vectors = _service()
     await service.register(_register())
     sources.fail_delete = True
 
     with pytest.raises(DocumentDeletionError, match="remains"):
         await service.delete_document(TenantId("tenant-a"), DocumentId("document-a"))
 
-    stored = await documents.get(TenantId("tenant-a"), DocumentId("document-a"))
-    assert stored is not None and stored.status is DocumentStatus.DELETING
+    deleting = await documents.get(TenantId("tenant-a"), DocumentId("document-a"))
+    assert deleting is not None and deleting.status is DocumentStatus.DELETING
+
+    sources.fail_delete = False
+    deleted = await service.delete_document(TenantId("tenant-a"), DocumentId("document-a"))
+
+    assert deleted.status is DocumentStatus.DELETED
+    assert sources.deleted is True
+    assert chunks.deleted is True
+    assert vectors.deleted is True
