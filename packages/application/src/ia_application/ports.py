@@ -130,12 +130,14 @@ class VectorQuery(StrictModel):
     allowed_roles: Annotated[frozenset[Role], Field(min_length=1)]
     query_vector: Annotated[tuple[float, ...], Field(min_length=1, max_length=4096)]
     top_k: Annotated[int, Field(ge=1, le=100)]
+    allowed_generation_ids: Annotated[frozenset[str], Field(min_length=1)] | None = None
 
 
 class VectorMatch(StrictModel):
     tenant_id: Annotated[TenantId, Field(min_length=1, max_length=128)]
     document_id: Annotated[DocumentId, Field(min_length=1, max_length=128)]
     chunk_id: Annotated[ChunkId, Field(min_length=1, max_length=128)]
+    generation_id: Annotated[str, Field(min_length=1, max_length=128)] = "legacy-generation"
     score: Annotated[float, Field(ge=0.0, le=1.0)]
 
 

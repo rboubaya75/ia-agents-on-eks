@@ -1,6 +1,11 @@
 from collections.abc import Sequence
 
-from ia_application import RepositoryConflictError, VectorMatch, VectorQuery, VectorRecord
+from ia_application import (
+    RepositoryConflictError,
+    VectorMatch,
+    VectorQuery,
+    VectorRecord,
+)
 from ia_domain import (
     ChunkId,
     Document,
@@ -74,12 +79,18 @@ class InMemoryVectorRepository:
                 continue
             if record.allowed_roles.isdisjoint(query.allowed_roles):
                 continue
+            if (
+                query.allowed_generation_ids is not None
+                and record.generation_id not in query.allowed_generation_ids
+            ):
+                continue
             score = self._cosine_similarity(query.query_vector, record.vector)
             matches.append(
                 VectorMatch(
                     tenant_id=record.tenant_id,
                     document_id=record.document_id,
                     chunk_id=record.chunk_id,
+                    generation_id=record.generation_id,
                     score=score,
                 )
             )

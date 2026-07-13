@@ -34,13 +34,65 @@ jobs:
         run: uv sync
 
       - name: Ruff lint
-        run: uv run ruff check packages apps tests
+        id: ruff
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run ruff check packages apps tests 2>&1 | tee ruff.log
+
+      - name: Upload Ruff failure log
+        if: failure() && steps.ruff.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruff-failure-log
+          path: ruff.log
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Ruff format check
-        run: uv run ruff format --check packages apps tests
+        id: ruff_format
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run ruff format --diff packages apps tests 2>&1 | tee ruff-format.log
+
+      - name: Upload Ruff format failure log
+        if: failure() && steps.ruff_format.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ruff-format-failure-log
+          path: ruff-format.log
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Mypy strict
-        run: uv run mypy
+        id: mypy
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run mypy 2>&1 | tee mypy.log
+
+      - name: Upload mypy failure log
+        if: failure() && steps.mypy.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mypy-failure-log
+          path: mypy.log
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Tests
-        run: uv run pytest
+        id: tests
+        shell: bash
+        run: |
+          set -o pipefail
+          uv run pytest 2>&1 | tee pytest.log
+
+      - name: Upload pytest failure log
+        if: failure() && steps.tests.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-failure-log
+          path: pytest.log
+          if-no-files-found: error
+          retention-days: 7

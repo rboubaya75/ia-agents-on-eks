@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 import pytest
-from ia_application import IngestionJobClaim
+from ia_application import IngestionJobClaim, RepositoryConflictError
 from ia_domain import DocumentId, IngestionJob, IngestionStatus, JobId, TenantId
 from test_support import InMemoryIngestionJobRepository
 
@@ -69,3 +69,24 @@ async def test_failed_fingerprint_can_be_claimed_for_retry() -> None:
 
     assert retry.acquired is True
     assert retry.job.job_id == JobId("job-retry")
+
+
+@pytest.mark.asyncio
+async def test_stale_terminal_update_cannot_overwrite_newer_claim() -> None:
+    repository = InMemoryIngestionJobRepository()
+    stale = _job("job-a", fencing_token=1)
+    await repository.claim(stale)
+    current = _job("job-a", fencing_token=2)
+    await repository.claim(current)
+
+    stale_failure = stale.model_copy(
+        update={
+            "status": IngestionStatus.FAILED,
+            "completed_at": NOW,
+            "error_code": "STALE_FAILURE",
+        }
+    )
+    with pytest.raises(RepositoryConflictError, match="stale"):
+        await repository.save(stale_failure)
+
+    assert await repository.get(TenantId("tenant-a"), JobId("job-a")) == current

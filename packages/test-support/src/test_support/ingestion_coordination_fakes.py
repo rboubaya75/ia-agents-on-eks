@@ -72,9 +72,17 @@ class InMemoryIngestionJobRepository:
         self._fingerprints: dict[tuple[TenantId, str], JobId] = {}
 
     async def save(self, job: IngestionJob) -> None:
-        self._jobs[(job.tenant_id, job.job_id)] = job
-        if job.fingerprint is not None:
-            self._fingerprints[(job.tenant_id, job.fingerprint)] = job.job_id
+        if job.fingerprint is not None and job.fencing_token is not None:
+            existing = await self.find_by_fingerprint(job.tenant_id, job.fingerprint)
+            if existing is not None:
+                if existing.job_id != job.job_id or existing.fencing_token != job.fencing_token:
+                    raise RepositoryConflictError("stale ingestion job state update was rejected")
+                if (
+                    existing.status is IngestionStatus.SUCCEEDED
+                    and job.status is not IngestionStatus.SUCCEEDED
+                ):
+                    raise RepositoryConflictError("succeeded ingestion job cannot be overwritten")
+        self._store(job)
 
     async def claim(self, job: IngestionJob) -> IngestionJobClaim:
         if job.fingerprint is None or job.fencing_token is None:
@@ -90,7 +98,7 @@ class InMemoryIngestionJobRepository:
             and existing.fencing_token >= job.fencing_token
         ):
             return IngestionJobClaim(job=existing, acquired=False)
-        await self.save(job)
+        self._store(job)
         return IngestionJobClaim(job=job, acquired=True)
 
     async def get(self, tenant_id: TenantId, job_id: JobId) -> IngestionJob | None:
@@ -101,6 +109,11 @@ class InMemoryIngestionJobRepository:
     ) -> IngestionJob | None:
         job_id = self._fingerprints.get((tenant_id, fingerprint))
         return None if job_id is None else self._jobs.get((tenant_id, job_id))
+
+    def _store(self, job: IngestionJob) -> None:
+        self._jobs[(job.tenant_id, job.job_id)] = job
+        if job.fingerprint is not None:
+            self._fingerprints[(job.tenant_id, job.fingerprint)] = job.job_id
 
 
 class InMemoryIndexActivationRepository:
