@@ -398,13 +398,14 @@ async def test_job_repository_save_lookup_and_conflict_paths() -> None:
     no_fingerprint = _job().model_copy(update={"fingerprint": None})
     await repository.save(no_fingerprint)
     assert len(table.puts) == 1
-    assert table.updates == []
+    assert table.transactions == []
 
     await repository.save(_job())
-    assert len(table.updates) == 1
+    assert len(table.transactions) == 1
 
-    table.update_error = True
-    await repository.save(_job())
+    table.transaction_error = True
+    with pytest.raises(RepositoryConflictError, match="stale"):
+        await repository.save(_job().model_copy(update={"fencing_token": 3}))
 
     assert await repository.get(TenantId("tenant-b"), JobId("job-a")) is None
     assert await repository.find_by_fingerprint(TenantId("tenant-a"), "missing") is None
