@@ -17,7 +17,7 @@ from ia_domain import (
 )
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ia_application.ingestion import DocumentIngestionService, IngestDocumentCommand
+from ia_application.ingestion import IngestDocumentCommand
 from ia_application.ports import (
     ChunkStore,
     DocumentRepository,
@@ -145,28 +145,25 @@ class DocumentSourceStore(Protocol):
 
 
 @runtime_checkable
+class DocumentIngestion(Protocol):
+    async def ingest(self, command: IngestDocumentCommand) -> IngestionJob: ...
+
+
+@runtime_checkable
 class DocumentManagement(Protocol):
     async def register(self, command: RegisterDocumentCommand) -> Document: ...
 
-    async def create_upload(
-        self, command: CreateSourceUploadCommand
-    ) -> PresignedSourceUpload: ...
+    async def create_upload(self, command: CreateSourceUploadCommand) -> PresignedSourceUpload: ...
 
-    async def get_document(
-        self, tenant_id: TenantId, document_id: DocumentId
-    ) -> Document: ...
+    async def get_document(self, tenant_id: TenantId, document_id: DocumentId) -> Document: ...
 
-    async def start_ingestion(
-        self, command: StartDocumentIngestionCommand
-    ) -> IngestionJob: ...
+    async def start_ingestion(self, command: StartDocumentIngestionCommand) -> IngestionJob: ...
 
     async def get_job(
         self, tenant_id: TenantId, document_id: DocumentId, job_id: JobId
     ) -> IngestionJob: ...
 
-    async def delete_document(
-        self, tenant_id: TenantId, document_id: DocumentId
-    ) -> Document: ...
+    async def delete_document(self, tenant_id: TenantId, document_id: DocumentId) -> Document: ...
 
 
 class Utf8DocumentExtractor(TextExtractor):
@@ -219,7 +216,7 @@ class DocumentManagementService(DocumentManagement):
         documents: DocumentRepository,
         jobs: IngestionJobRepository,
         sources: DocumentSourceStore,
-        ingestion: DocumentIngestionService,
+        ingestion: DocumentIngestion,
         chunks: ChunkStore,
         vectors: VectorRepository,
         max_source_bytes: int,
@@ -269,9 +266,7 @@ class DocumentManagementService(DocumentManagement):
         except RepositoryConflictError as error:
             raise DocumentStateConflictError("document already exists") from error
 
-    async def create_upload(
-        self, command: CreateSourceUploadCommand
-    ) -> PresignedSourceUpload:
+    async def create_upload(self, command: CreateSourceUploadCommand) -> PresignedSourceUpload:
         document = await self.get_document(command.tenant_id, command.document_id)
         if document.status is not DocumentStatus.PENDING_UPLOAD:
             raise DocumentStateConflictError("document state does not permit an upload")
@@ -285,17 +280,13 @@ class DocumentManagementService(DocumentManagement):
             expires_at=command.expires_at,
         )
 
-    async def get_document(
-        self, tenant_id: TenantId, document_id: DocumentId
-    ) -> Document:
+    async def get_document(self, tenant_id: TenantId, document_id: DocumentId) -> Document:
         document = await self._documents.get(tenant_id, document_id)
         if document is None or document.status is DocumentStatus.DELETED:
             raise ManagedDocumentNotFoundError("document was not found")
         return document
 
-    async def start_ingestion(
-        self, command: StartDocumentIngestionCommand
-    ) -> IngestionJob:
+    async def start_ingestion(self, command: StartDocumentIngestionCommand) -> IngestionJob:
         document = await self.get_document(command.tenant_id, command.document_id)
         if document.status in {DocumentStatus.DELETING, DocumentStatus.DELETED}:
             raise DocumentStateConflictError("document is being deleted")
@@ -334,26 +325,25 @@ class DocumentManagementService(DocumentManagement):
             raise ManagedDocumentNotFoundError("ingestion job was not found")
         return job
 
-    async def delete_document(
-        self, tenant_id: TenantId, document_id: DocumentId
-    ) -> Document:
+    async def delete_document(self, tenant_id: TenantId, document_id: DocumentId) -> Document:
         document = await self.get_document(tenant_id, document_id)
         if document.status is DocumentStatus.DELETING:
-            raise DocumentDeletionError("document deletion is incomplete and must be retried")
-        try:
-            deleting = await self._documents.save(
-                document.model_copy(
-                    update={
-                        "status": DocumentStatus.DELETING,
-                        "updated_at": self._aware_now(),
-                    }
-                ),
-                expected_revision=document.revision,
-            )
-        except RepositoryConflictError as error:
-            raise DocumentStateConflictError(
-                "document changed before deletion started"
-            ) from error
+            deleting = document
+        else:
+            try:
+                deleting = await self._documents.save(
+                    document.model_copy(
+                        update={
+                            "status": DocumentStatus.DELETING,
+                            "updated_at": self._aware_now(),
+                        }
+                    ),
+                    expected_revision=document.revision,
+                )
+            except RepositoryConflictError as error:
+                raise DocumentStateConflictError(
+                    "document changed before deletion started"
+                ) from error
         results = await asyncio.gather(
             self._sources.delete_document(tenant_id, document_id),
             self._chunks.delete_document(tenant_id, document_id),
