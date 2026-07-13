@@ -141,15 +141,6 @@ class DynamoIngestionJobRepository(IngestionJobRepository):
         if fingerprint is None or fencing_token is None:
             msg = "fenced ingestion job updates require fingerprint and fencing token"
             raise ValueError(msg)
-        shared_values: dict[str, object] = {
-            ":job_type": _ENTITY_JOB,
-            ":marker_type": _ENTITY_FINGERPRINT,
-            ":job": str(job.job_id),
-            ":fingerprint": fingerprint,
-            ":fencing": fencing_token,
-            ":running": IngestionStatus.RUNNING.value,
-            ":target": job.status.value,
-        }
         job_condition = (
             "attribute_not_exists(jobId) OR "
             "(entityType = :job_type AND jobId = :job AND "
@@ -171,13 +162,23 @@ class DynamoIngestionJobRepository(IngestionJobRepository):
             "status": job.status.value,
             "fencingToken": fencing_token,
         }
+        common_values: dict[str, object] = {
+            ":job": str(job.job_id),
+            ":fingerprint": fingerprint,
+            ":fencing": fencing_token,
+            ":running": IngestionStatus.RUNNING.value,
+            ":target": job.status.value,
+        }
         return (
             {
                 "Put": {
                     "Item": _job_item(job),
                     "ConditionExpression": job_condition,
                     "ExpressionAttributeNames": {"#status": "status"},
-                    "ExpressionAttributeValues": shared_values,
+                    "ExpressionAttributeValues": {
+                        **common_values,
+                        ":job_type": _ENTITY_JOB,
+                    },
                 }
             },
             {
@@ -185,7 +186,10 @@ class DynamoIngestionJobRepository(IngestionJobRepository):
                     "Item": marker,
                     "ConditionExpression": marker_condition,
                     "ExpressionAttributeNames": {"#status": "status"},
-                    "ExpressionAttributeValues": shared_values,
+                    "ExpressionAttributeValues": {
+                        **common_values,
+                        ":marker_type": _ENTITY_FINGERPRINT,
+                    },
                 }
             },
         )
