@@ -54,7 +54,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          uv run ruff format --check packages apps tests 2>&1 | tee ruff-format.log
+          uv run ruff format --diff packages apps tests 2>&1 | tee ruff-format.log
 
       - name: Upload Ruff format failure log
         if: failure() && steps.ruff_format.outcome == 'failure'
