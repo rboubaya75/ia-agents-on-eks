@@ -1,6 +1,5 @@
 import asyncio
 import base64
-from collections.abc import Mapping
 from datetime import datetime
 from typing import cast
 
@@ -73,7 +72,8 @@ class S3DocumentSourceStore(DocumentSourceStore):
         document_id: DocumentId,
         source_version: str,
     ) -> str:
-        return f"s3://{self._bucket_name}/{self._source_key(tenant_id, document_id, source_version)}"
+        key = self._source_key(tenant_id, document_id, source_version)
+        return f"s3://{self._bucket_name}/{key}"
 
     async def create_upload(
         self,
