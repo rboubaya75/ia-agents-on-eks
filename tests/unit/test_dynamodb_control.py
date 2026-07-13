@@ -7,6 +7,8 @@ from ia_aws_clients.dynamodb_control import (
     Boto3DynamoClient,
     Boto3DynamoControlTable,
     DynamoConditionFailedError,
+    TransactionAction,
+    transaction_payload_token,
 )
 
 
@@ -79,6 +81,116 @@ async def test_control_table_serializes_values_and_transaction_token() -> None:
             }
         }
     ]
+
+
+def test_transaction_payload_token_is_stable_for_identical_serialized_payloads() -> None:
+    first: tuple[TransactionAction, ...] = (
+        {
+            "Put": {
+                "Item": {
+                    "pk": "tenant",
+                    "startedAt": "2026-07-12T12:00:00.000000Z",
+                    "roles": {"support", "admin"},
+                    "payload": b"payload",
+                },
+                "ConditionExpression": "attribute_not_exists(pk)",
+            }
+        },
+    )
+    reordered: tuple[TransactionAction, ...] = (
+        {
+            "Put": {
+                "ConditionExpression": "attribute_not_exists(pk)",
+                "Item": {
+                    "payload": b"payload",
+                    "roles": {"admin", "support"},
+                    "startedAt": "2026-07-12T12:00:00.000000Z",
+                    "pk": "tenant",
+                },
+            }
+        },
+    )
+
+    first_token = transaction_payload_token(
+        namespace="claim-ingestion-job",
+        table_name="control",
+        actions=first,
+    )
+    reordered_token = transaction_payload_token(
+        namespace="claim-ingestion-job",
+        table_name="control",
+        actions=reordered,
+    )
+
+    assert len(first_token) == 36
+    assert first_token == reordered_token
+
+
+def test_transaction_payload_token_changes_with_any_request_parameter() -> None:
+    base: tuple[TransactionAction, ...] = (
+        {
+            "Put": {
+                "Item": {
+                    "pk": "tenant",
+                    "startedAt": "2026-07-12T12:00:00.000000Z",
+                }
+            }
+        },
+    )
+    changed_timestamp: tuple[TransactionAction, ...] = (
+        {
+            "Put": {
+                "Item": {
+                    "pk": "tenant",
+                    "startedAt": "2026-07-12T12:00:01.000000Z",
+                }
+            }
+        },
+    )
+
+    base_token = transaction_payload_token(
+        namespace="claim-ingestion-job",
+        table_name="control",
+        actions=base,
+    )
+
+    assert base_token != transaction_payload_token(
+        namespace="claim-ingestion-job",
+        table_name="control",
+        actions=changed_timestamp,
+    )
+    assert base_token != transaction_payload_token(
+        namespace="activate-index-generation",
+        table_name="control",
+        actions=base,
+    )
+    assert base_token != transaction_payload_token(
+        namespace="claim-ingestion-job",
+        table_name="other-control",
+        actions=base,
+    )
+
+
+@pytest.mark.parametrize(
+    ("namespace", "table_name", "actions", "message"),
+    [
+        ("", "control", ({"Delete": {"Key": {"pk": "tenant"}}},), "namespace"),
+        ("claim", "", ({"Delete": {"Key": {"pk": "tenant"}}},), "table_name"),
+        ("claim", "control", (), "actions"),
+    ],
+)
+def test_transaction_payload_token_rejects_incomplete_inputs(
+    namespace: str,
+    table_name: str,
+    actions: tuple[TransactionAction, ...],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        transaction_payload_token(
+            namespace=namespace,
+            table_name=table_name,
+            actions=actions,
+        )
 
 
 @pytest.mark.asyncio
