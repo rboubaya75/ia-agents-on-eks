@@ -9,7 +9,7 @@ from ia_domain import (
     IngestionJob,
     Role,
 )
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def _to_camel(value: str) -> str:
@@ -96,6 +96,30 @@ class CreateDocumentRequest(ApiModel):
     language: Annotated[str, Field(min_length=2, max_length=35)] = "fr"
     classification: Classification
     allowed_roles: Annotated[frozenset[Role], Field(min_length=1)]
+
+    @field_validator("classification", mode="before")
+    @classmethod
+    def parse_classification(cls, value: object) -> Classification:
+        if isinstance(value, Classification):
+            return value
+        if isinstance(value, str):
+            return Classification(value)
+        raise ValueError("classification must be a supported string value")
+
+    @field_validator("allowed_roles", mode="before")
+    @classmethod
+    def parse_allowed_roles(cls, value: object) -> frozenset[Role]:
+        if not isinstance(value, list | tuple | set | frozenset):
+            raise ValueError("allowedRoles must be an array")
+        roles: set[Role] = set()
+        for item in value:
+            if isinstance(item, Role):
+                roles.add(item)
+            elif isinstance(item, str):
+                roles.add(Role(item))
+            else:
+                raise ValueError("allowedRoles contains an invalid role")
+        return frozenset(roles)
 
 
 class CreateUploadRequest(ApiModel):
