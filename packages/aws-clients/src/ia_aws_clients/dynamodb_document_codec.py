@@ -1,4 +1,3 @@
-import hashlib
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -33,14 +32,6 @@ def _composite_key(*parts: str) -> str:
         msg = "composite key parts must not be empty"
         raise ValueError(msg)
     return "".join(f"{len(part)}:{part}" for part in parts)
-
-
-def _transaction_token(*parts: str) -> str:
-    if not parts or any(not part for part in parts):
-        msg = "transaction token parts must not be empty"
-        raise ValueError(msg)
-    material = "\x00".join(parts).encode("utf-8")
-    return hashlib.sha256(material).hexdigest()[:36]
 
 
 def _tenant_pk(tenant_id: TenantId) -> str:
