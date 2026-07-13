@@ -191,8 +191,7 @@ class Utf8DocumentExtractor(TextExtractor):
             raise InvalidDocumentSourceError("document source is not valid UTF-8") from error
         normalized = text.replace("\r\n", "\n").replace("\r", "\n")
         if any(
-            (ord(character) < 32 and character not in {"\n", "\t", "\f"})
-            or ord(character) == 127
+            (ord(character) < 32 and character not in {"\n", "\t", "\f"}) or ord(character) == 127
             for character in normalized
         ):
             raise InvalidDocumentSourceError(
