@@ -196,14 +196,12 @@ class DynamoIndexActivationRepository(IndexActivationRepository):
             ):
                 return None
             if (
-                _string(marker_item.get("entityType"), "entityType")
-                != _ENTITY_FINGERPRINT
+                _string(marker_item.get("entityType"), "entityType") != _ENTITY_FINGERPRINT
                 or _string(marker_item.get("tenantId"), "tenantId")
                 != str(generation.tenant_id)
                 or _string(marker_item.get("fingerprint"), "fingerprint")
                 != generation.fingerprint
-                or _string(marker_item.get("jobId"), "jobId")
-                != str(succeeded_job.job_id)
+                or _string(marker_item.get("jobId"), "jobId") != str(succeeded_job.job_id)
                 or _string(marker_item.get("status"), "status")
                 != IngestionStatus.SUCCEEDED.value
                 or _integer(marker_item.get("fencingToken"), "fencingToken")
