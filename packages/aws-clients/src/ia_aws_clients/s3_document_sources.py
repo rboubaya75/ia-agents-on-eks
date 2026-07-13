@@ -90,9 +90,7 @@ class S3DocumentSourceStore(DocumentSourceStore):
         if ttl_seconds <= 0:
             msg = "source upload expiration must be in the future"
             raise ValueError(msg)
-        checksum_base64 = base64.b64encode(
-            bytes.fromhex(document.source_checksum)
-        ).decode("ascii")
+        checksum_base64 = base64.b64encode(bytes.fromhex(document.source_checksum)).decode("ascii")
         params: dict[str, object] = {
             "Bucket": self._bucket_name,
             "Key": self._source_key(
