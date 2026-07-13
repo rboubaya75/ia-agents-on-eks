@@ -9,6 +9,7 @@ from ia_aws_clients.dynamodb_control import (
     DynamoConditionFailedError,
     DynamoControlTable,
     TransactionAction,
+    transaction_payload_token,
 )
 from ia_aws_clients.dynamodb_document_codec import (
     _ENTITY_FINGERPRINT,
@@ -18,7 +19,6 @@ from ia_aws_clients.dynamodb_document_codec import (
     _job_item,
     _job_key,
     _string,
-    _transaction_token,
 )
 
 
@@ -33,7 +33,14 @@ class DynamoIngestionJobRepository(IngestionJobRepository):
 
         actions = self._save_actions(job)
         try:
-            await self._table.transact_write(actions)
+            await self._table.transact_write(
+                actions,
+                client_request_token=transaction_payload_token(
+                    namespace="save-ingestion-job",
+                    table_name=self._table.table_name,
+                    actions=actions,
+                ),
+            )
         except DynamoConditionFailedError as error:
             current = await self.get(job.tenant_id, job.job_id)
             if current == job:
@@ -93,12 +100,10 @@ class DynamoIngestionJobRepository(IngestionJobRepository):
         try:
             await self._table.transact_write(
                 actions,
-                client_request_token=_transaction_token(
-                    "claim",
-                    str(job.tenant_id),
-                    str(job.job_id),
-                    job.fingerprint,
-                    str(job.fencing_token),
+                client_request_token=transaction_payload_token(
+                    namespace="claim-ingestion-job",
+                    table_name=self._table.table_name,
+                    actions=actions,
                 ),
             )
         except DynamoConditionFailedError:
