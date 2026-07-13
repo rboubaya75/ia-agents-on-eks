@@ -12,6 +12,7 @@ from ia_aws_clients.dynamodb_control import (
 )
 from ia_aws_clients.dynamodb_document_codec import (
     _ENTITY_FINGERPRINT,
+    _ENTITY_JOB,
     _decode_job,
     _fingerprint_key,
     _job_item,
@@ -26,30 +27,20 @@ class DynamoIngestionJobRepository(IngestionJobRepository):
         self._table = table
 
     async def save(self, job: IngestionJob) -> None:
-        await self._table.put_item(_job_item(job))
-        if job.fingerprint is None:
+        if job.fingerprint is None or job.fencing_token is None:
+            await self._table.put_item(_job_item(job))
             return
-        marker_values: dict[str, object] = {
-            ":entity": _ENTITY_FINGERPRINT,
-            ":tenant": str(job.tenant_id),
-            ":fingerprint": job.fingerprint,
-            ":job": str(job.job_id),
-            ":status": job.status.value,
-            ":fencing": job.fencing_token or 0,
-        }
+
+        actions = self._save_actions(job)
         try:
-            await self._table.update_item(
-                _fingerprint_key(job.tenant_id, job.fingerprint),
-                update_expression=(
-                    "SET entityType = :entity, tenantId = :tenant, fingerprint = :fingerprint, "
-                    "jobId = :job, #status = :status, fencingToken = :fencing"
-                ),
-                condition_expression="attribute_not_exists(jobId) OR jobId = :job",
-                expression_attribute_names={"#status": "status"},
-                expression_attribute_values=marker_values,
-            )
-        except DynamoConditionFailedError:
-            return
+            await self._table.transact_write(actions)
+        except DynamoConditionFailedError as error:
+            current = await self.get(job.tenant_id, job.job_id)
+            if current == job:
+                return
+            raise RepositoryConflictError(
+                "stale ingestion job state update was rejected"
+            ) from error
 
     async def claim(self, job: IngestionJob) -> IngestionJobClaim:
         if job.fingerprint is None or job.fencing_token is None:
@@ -142,3 +133,59 @@ class DynamoIngestionJobRepository(IngestionJobRepository):
             msg = "ingestion fingerprint marker references a missing job"
             raise RuntimeError(msg)
         return job
+
+    @staticmethod
+    def _save_actions(job: IngestionJob) -> tuple[TransactionAction, ...]:
+        fingerprint = job.fingerprint
+        fencing_token = job.fencing_token
+        if fingerprint is None or fencing_token is None:
+            msg = "fenced ingestion job updates require fingerprint and fencing token"
+            raise ValueError(msg)
+        shared_values: dict[str, object] = {
+            ":job_type": _ENTITY_JOB,
+            ":marker_type": _ENTITY_FINGERPRINT,
+            ":job": str(job.job_id),
+            ":fingerprint": fingerprint,
+            ":fencing": fencing_token,
+            ":running": IngestionStatus.RUNNING.value,
+            ":target": job.status.value,
+        }
+        job_condition = (
+            "attribute_not_exists(jobId) OR "
+            "(entityType = :job_type AND jobId = :job AND "
+            "fingerprint = :fingerprint AND fencingToken = :fencing AND "
+            "(#status = :running OR #status = :target))"
+        )
+        marker_condition = (
+            "attribute_not_exists(jobId) OR "
+            "(entityType = :marker_type AND jobId = :job AND "
+            "fingerprint = :fingerprint AND fencingToken = :fencing AND "
+            "(#status = :running OR #status = :target))"
+        )
+        marker = {
+            **_fingerprint_key(job.tenant_id, fingerprint),
+            "entityType": _ENTITY_FINGERPRINT,
+            "tenantId": str(job.tenant_id),
+            "fingerprint": fingerprint,
+            "jobId": str(job.job_id),
+            "status": job.status.value,
+            "fencingToken": fencing_token,
+        }
+        return (
+            {
+                "Put": {
+                    "Item": _job_item(job),
+                    "ConditionExpression": job_condition,
+                    "ExpressionAttributeNames": {"#status": "status"},
+                    "ExpressionAttributeValues": shared_values,
+                }
+            },
+            {
+                "Put": {
+                    "Item": marker,
+                    "ConditionExpression": marker_condition,
+                    "ExpressionAttributeNames": {"#status": "status"},
+                    "ExpressionAttributeValues": shared_values,
+                }
+            },
+        )
