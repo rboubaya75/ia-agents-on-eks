@@ -79,12 +79,11 @@ def _ensure_document_manager(principal: Principal) -> None:
         )
 
 
-def _ensure_classification_allowed(
-    principal: Principal, classification: Classification
-) -> None:
-    if _CLASSIFICATION_RANK[classification] > _CLASSIFICATION_RANK[
-        principal.maximum_classification
-    ]:
+def _ensure_classification_allowed(principal: Principal, classification: Classification) -> None:
+    if (
+        _CLASSIFICATION_RANK[classification]
+        > _CLASSIFICATION_RANK[principal.maximum_classification]
+    ):
         raise ApiError(
             status_code=403,
             code="classification_forbidden",
@@ -328,8 +327,7 @@ def create_app(container: AppContainer) -> FastAPI:
                     tenant_id=principal.tenant_id,
                     document_id=DocumentId(document_id),
                     size_bytes=payload.size_bytes,
-                    expires_at=dependencies.now()
-                    + timedelta(seconds=payload.expires_in_seconds),
+                    expires_at=dependencies.now() + timedelta(seconds=payload.expires_in_seconds),
                 )
             )
         except Exception as error:
@@ -413,12 +411,20 @@ def create_app(container: AppContainer) -> FastAPI:
         dependencies: Annotated[AppContainer, Depends(get_container)],
     ) -> IngestionJobResponse:
         ensure_scopes(principal, {dependencies.scopes.document_read})
+        service = _document_service(dependencies)
         try:
-            job = await _document_service(dependencies).get_job(
+            document = await service.get_document(
+                principal.tenant_id,
+                DocumentId(document_id),
+            )
+            _ensure_document_readable(principal, document)
+            job = await service.get_job(
                 principal.tenant_id,
                 DocumentId(document_id),
                 JobId(job_id),
             )
+        except ApiError:
+            raise
         except Exception as error:
             raise _document_api_error(error) from error
         return IngestionJobResponse(
