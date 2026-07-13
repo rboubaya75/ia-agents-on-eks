@@ -10,6 +10,15 @@ from ia_aws_clients.dynamodb_control import (
     PythonItem,
     TransactionAction,
 )
+from ia_aws_clients.dynamodb_document_codec import (
+    _ENTITY_FINGERPRINT,
+    _document_item,
+    _fingerprint_key,
+    _generation_item,
+    _generation_key,
+    _job_item,
+    _job_key,
+)
 from ia_aws_clients.dynamodb_documents import (
     DynamoDocumentIngestionLeaseRepository,
     DynamoDocumentRepository,
@@ -39,6 +48,7 @@ class RecordingControlTable:
         self.items: dict[tuple[str, str], PythonItem] = {}
         self.transactions: list[tuple[tuple[TransactionAction, ...], str | None]] = []
         self.fail_transaction = False
+        self.transaction_error: Exception | None = None
 
     @property
     def table_name(self) -> str:
@@ -63,7 +73,8 @@ class RecordingControlTable:
                 raise DynamoConditionFailedError("condition")
             if "#revision = :expected" in condition_expression and (
                 current is None
-                or current.get("revision") != (expression_attribute_values or {}).get(":expected")
+                or current.get("revision")
+                != (expression_attribute_values or {}).get(":expected")
             ):
                 raise DynamoConditionFailedError("condition")
         self.items[key] = dict(item)
@@ -109,6 +120,8 @@ class RecordingControlTable:
     ) -> None:
         if self.fail_transaction:
             raise DynamoConditionFailedError("condition")
+        if self.transaction_error is not None:
+            raise self.transaction_error
         self.transactions.append((tuple(actions), client_request_token))
 
 
@@ -183,6 +196,10 @@ def _operation(action: TransactionAction, name: str) -> Mapping[str, object]:
     return cast(Mapping[str, object], value)
 
 
+def _store(table: RecordingControlTable, item: Mapping[str, object]) -> None:
+    table.items[(str(item["pk"]), str(item["sk"]))] = dict(item)
+
+
 @pytest.mark.asyncio
 async def test_document_repository_uses_optimistic_revision() -> None:
     table = RecordingControlTable()
@@ -216,6 +233,30 @@ async def test_job_claim_is_atomic_idempotent_and_protects_job_identity() -> Non
 
 
 @pytest.mark.asyncio
+async def test_fenced_job_save_is_atomic_and_rejects_stale_updates() -> None:
+    table = RecordingControlTable()
+    repository = DynamoIngestionJobRepository(cast(DynamoControlTable, table))
+    failed = _job(IngestionStatus.FAILED).model_copy(
+        update={"completed_at": NOW, "error_code": "EXTRACTION_FAILED"}
+    )
+
+    await repository.save(failed)
+
+    actions, token = table.transactions[-1]
+    assert token is None
+    assert len(actions) == 2
+    for action in actions:
+        operation = _operation(action, "Put")
+        condition = str(operation["ConditionExpression"])
+        assert "fencingToken = :fencing" in condition
+        assert "#status = :running OR #status = :target" in condition
+
+    table.fail_transaction = True
+    with pytest.raises(RepositoryConflictError, match="stale"):
+        await repository.save(failed.model_copy(update={"fencing_token": 2}))
+
+
+@pytest.mark.asyncio
 async def test_lease_adapter_returns_fenced_lease() -> None:
     table = RecordingControlTable()
     repository = DynamoDocumentIngestionLeaseRepository(cast(DynamoControlTable, table))
@@ -235,7 +276,7 @@ async def test_lease_adapter_returns_fenced_lease() -> None:
 
 
 @pytest.mark.asyncio
-async def test_activation_uses_one_four_item_conditional_transaction() -> None:
+async def test_activation_uses_one_five_item_conditional_transaction() -> None:
     table = RecordingControlTable()
     documents = DynamoDocumentRepository(cast(DynamoControlTable, table))
     stored = await documents.save(_document())
@@ -250,10 +291,18 @@ async def test_activation_uses_one_four_item_conditional_transaction() -> None:
 
     assert result.active_generation_id == "generation-a"
     actions, token = table.transactions[-1]
-    assert len(actions) == 4
+    assert len(actions) == 5
     assert token is not None and len(token) == 36
-    document_update = _operation(actions[0], "Update")
-    generation_update = _operation(actions[1], "Update")
+    lease_check = _operation(actions[0], "ConditionCheck")
+    lease_condition = str(lease_check["ConditionExpression"])
+    assert "ownerToken = :owner" in lease_condition
+    assert "fencingToken = :fencing" in lease_condition
+    assert "expiresAt > :activated" in lease_condition
+    lease_values = lease_check["ExpressionAttributeValues"]
+    assert isinstance(lease_values, Mapping)
+    assert lease_values[":owner"] == "job-a"
+    document_update = _operation(actions[1], "Update")
+    generation_update = _operation(actions[2], "Update")
     assert "lastFencingToken < :fencing" in str(document_update["ConditionExpression"])
     values = generation_update["ExpressionAttributeValues"]
     assert isinstance(values, Mapping)
@@ -261,6 +310,75 @@ async def test_activation_uses_one_four_item_conditional_transaction() -> None:
 
     table.fail_transaction = True
     with pytest.raises(RepositoryConflictError):
+        await activation.activate(
+            generation=_generation(),
+            succeeded_job=_job(IngestionStatus.SUCCEEDED),
+            expected_document_revision=stored.revision,
+            activated_at=NOW,
+        )
+
+
+@pytest.mark.asyncio
+async def test_activation_reconciles_an_ambiguous_committed_transaction() -> None:
+    table = RecordingControlTable()
+    documents = DynamoDocumentRepository(cast(DynamoControlTable, table))
+    stored = await documents.save(_document())
+    generation = _generation()
+    succeeded = _job(IngestionStatus.SUCCEEDED)
+    activated_document = stored.model_copy(
+        update={
+            "active_generation_id": generation.generation_id,
+            "active_index_fingerprint": generation.fingerprint,
+            "last_fencing_token": generation.fencing_token,
+            "status": DocumentStatus.INDEXED,
+            "updated_at": NOW,
+            "revision": stored.revision + 1,
+        }
+    )
+    active_generation = generation.model_copy(
+        update={
+            "status": IndexGenerationStatus.ACTIVE,
+            "activated_at": NOW,
+        }
+    )
+    _store(table, _document_item(activated_document))
+    _store(table, _generation_item(active_generation))
+    _store(table, _job_item(succeeded))
+    marker_key = _fingerprint_key(generation.tenant_id, generation.fingerprint)
+    _store(
+        table,
+        {
+            **marker_key,
+            "entityType": _ENTITY_FINGERPRINT,
+            "tenantId": str(generation.tenant_id),
+            "fingerprint": generation.fingerprint,
+            "jobId": str(succeeded.job_id),
+            "status": IngestionStatus.SUCCEEDED.value,
+            "fencingToken": generation.fencing_token,
+        },
+    )
+    table.transaction_error = RuntimeError("response was lost")
+    activation = DynamoIndexActivationRepository(cast(DynamoControlTable, table))
+
+    result = await activation.activate(
+        generation=generation,
+        succeeded_job=succeeded,
+        expected_document_revision=stored.revision,
+        activated_at=NOW,
+    )
+
+    assert result == activated_document
+
+
+@pytest.mark.asyncio
+async def test_activation_propagates_ambiguous_failure_when_commit_is_absent() -> None:
+    table = RecordingControlTable()
+    documents = DynamoDocumentRepository(cast(DynamoControlTable, table))
+    stored = await documents.save(_document())
+    table.transaction_error = RuntimeError("transaction status is unknown")
+    activation = DynamoIndexActivationRepository(cast(DynamoControlTable, table))
+
+    with pytest.raises(RuntimeError, match="unknown"):
         await activation.activate(
             generation=_generation(),
             succeeded_job=_job(IngestionStatus.SUCCEEDED),
