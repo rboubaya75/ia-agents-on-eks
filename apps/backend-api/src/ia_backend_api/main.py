@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from ia_application import (
     DocumentIngestionService,
+    DocumentManagement,
     DocumentManagementService,
     ParagraphChunker,
     Utf8DocumentExtractor,
@@ -43,25 +44,7 @@ class DynamoReadinessProbe(ReadinessProbe):
         return await self._table.ping()
 
 
-def create_application() -> FastAPI:
-    settings = BackendSettings()
-    token_settings = CognitoTokenVerifierSettings(
-        issuer=settings.cognito_issuer,
-        client_id=settings.cognito_client_id,
-        required_scopes=settings.cognito_required_scopes,
-    )
-    token_verifier = CognitoTokenVerifier(
-        settings=token_settings,
-        jwk_provider=CachedJwkProvider(
-            jwks_uri=token_settings.jwks_uri,
-            fetcher=HttpJwkSetFetcher(),
-        ),
-    )
-    session_table = Boto3DynamoTable.from_table_name(
-        settings.chat_session_table,
-        region_name=settings.aws_region,
-    )
-
+def create_document_management(settings: BackendSettings) -> DocumentManagement:
     control_table = Boto3DynamoControlTable.from_table_name(
         settings.document_control_table,
         region_name=settings.aws_region,
@@ -121,7 +104,7 @@ def create_application() -> FastAPI:
         chunks=chunks,
         vectors=vectors,
     )
-    document_management = DocumentManagementService(
+    return DocumentManagementService(
         documents=documents,
         jobs=jobs,
         sources=sources,
@@ -129,6 +112,26 @@ def create_application() -> FastAPI:
         chunks=chunks,
         vectors=vectors,
         max_source_bytes=settings.document_max_source_bytes,
+    )
+
+
+def create_application() -> FastAPI:
+    settings = BackendSettings()
+    token_settings = CognitoTokenVerifierSettings(
+        issuer=settings.cognito_issuer,
+        client_id=settings.cognito_client_id,
+        required_scopes=settings.cognito_required_scopes,
+    )
+    token_verifier = CognitoTokenVerifier(
+        settings=token_settings,
+        jwk_provider=CachedJwkProvider(
+            jwks_uri=token_settings.jwks_uri,
+            fetcher=HttpJwkSetFetcher(),
+        ),
+    )
+    session_table = Boto3DynamoTable.from_table_name(
+        settings.chat_session_table,
+        region_name=settings.aws_region,
     )
 
     return create_app(
@@ -139,6 +142,6 @@ def create_application() -> FastAPI:
                 user_index_name=settings.chat_session_user_index,
             ),
             readiness=DynamoReadinessProbe(session_table),
-            documents=document_management,
+            documents=create_document_management(settings),
         )
     )
