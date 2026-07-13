@@ -154,3 +154,17 @@ async def test_upload_rejects_oversized_source() -> None:
             size_bytes=11,
             expires_at=datetime.now(UTC) + timedelta(minutes=5),
         )
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_expiration_beyond_fifteen_minutes() -> None:
+    store = S3DocumentSourceStore(
+        cast(Boto3S3Client, RecordingS3Client()),
+        bucket_name="private-documents",
+    )
+    with pytest.raises(ValueError, match="15 minutes"):
+        await store.create_upload(
+            _document(),
+            size_bytes=8,
+            expires_at=datetime.now(UTC) + timedelta(minutes=16),
+        )
