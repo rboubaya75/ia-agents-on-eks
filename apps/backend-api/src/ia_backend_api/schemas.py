@@ -1,7 +1,14 @@
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
-from ia_domain import ChatSession, Classification, Role
+from ia_application import PresignedSourceUpload
+from ia_domain import (
+    ChatSession,
+    Classification,
+    Document,
+    IngestionJob,
+    Role,
+)
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -79,4 +86,127 @@ class DeleteSessionResponse(ApiModel):
     request_id: str
     trace_id: str
     session_id: str
+    deleted: bool
+
+
+class CreateDocumentRequest(ApiModel):
+    title: Annotated[str, Field(min_length=1, max_length=500)]
+    source_checksum: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+    content_type: Literal["text/plain", "text/markdown"]
+    language: Annotated[str, Field(min_length=2, max_length=35)] = "fr"
+    classification: Classification
+    allowed_roles: Annotated[frozenset[Role], Field(min_length=1)]
+
+
+class CreateUploadRequest(ApiModel):
+    size_bytes: Annotated[int, Field(ge=1)]
+    expires_in_seconds: Annotated[int, Field(ge=60, le=900)] = 300
+
+
+class StartIngestionRequest(ApiModel):
+    embedding_model_alias: Annotated[str, Field(min_length=1, max_length=128)] = "default"
+    pipeline_version: Annotated[str, Field(min_length=1, max_length=128)] = "ingestion-v1"
+
+
+class DocumentView(ApiModel):
+    document_id: str
+    owner_user_id: str
+    title: str
+    source_version: str
+    content_type: str
+    language: str
+    classification: Classification
+    allowed_roles: tuple[Role, ...]
+    status: str
+    revision: int
+    active_generation_id: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_domain(cls, document: Document) -> "DocumentView":
+        return cls(
+            document_id=str(document.document_id),
+            owner_user_id=str(document.owner_user_id),
+            title=document.title,
+            source_version=document.source_version,
+            content_type=document.content_type,
+            language=document.language,
+            classification=document.classification,
+            allowed_roles=tuple(sorted(document.allowed_roles, key=lambda role: role.value)),
+            status=document.status.value,
+            revision=document.revision,
+            active_generation_id=document.active_generation_id,
+            created_at=document.created_at,
+            updated_at=document.updated_at,
+        )
+
+
+class DocumentResponse(ApiModel):
+    request_id: str
+    trace_id: str
+    document: DocumentView
+
+
+class SourceUploadView(ApiModel):
+    url: str
+    method: str
+    headers: dict[str, str]
+    expires_at: datetime
+
+    @classmethod
+    def from_application(cls, upload: PresignedSourceUpload) -> "SourceUploadView":
+        return cls(
+            url=upload.url,
+            method=upload.method,
+            headers=upload.headers,
+            expires_at=upload.expires_at,
+        )
+
+
+class SourceUploadResponse(ApiModel):
+    request_id: str
+    trace_id: str
+    document_id: str
+    upload: SourceUploadView
+
+
+class IngestionJobView(ApiModel):
+    job_id: str
+    document_id: str
+    source_version: str
+    status: str
+    chunks_created: int
+    vectors_created: int
+    error_code: str | None
+    generation_id: str | None
+    started_at: datetime
+    completed_at: datetime | None
+
+    @classmethod
+    def from_domain(cls, job: IngestionJob) -> "IngestionJobView":
+        return cls(
+            job_id=str(job.job_id),
+            document_id=str(job.document_id),
+            source_version=job.source_version,
+            status=job.status.value,
+            chunks_created=job.chunks_created,
+            vectors_created=job.vectors_created,
+            error_code=job.error_code,
+            generation_id=job.generation_id,
+            started_at=job.started_at,
+            completed_at=job.completed_at,
+        )
+
+
+class IngestionJobResponse(ApiModel):
+    request_id: str
+    trace_id: str
+    job: IngestionJobView
+
+
+class DeleteDocumentResponse(ApiModel):
+    request_id: str
+    trace_id: str
+    document_id: str
     deleted: bool
