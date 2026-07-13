@@ -45,6 +45,29 @@ fencingToken
 
 A worker holding an older fencing token cannot overwrite a newer retry, even when both attempts reuse the same job ID.
 
+### Canonical transaction idempotency
+
+Claim and activation transactions derive their 36-character DynamoDB `ClientRequestToken` from:
+
+```text
+operation namespace
+control-table name
+ordered transaction actions
+boto3-serialized items and keys
+condition and update expressions
+expression attribute names and values
+all timestamps and counters
+```
+
+The serialized structure is canonicalized with sorted mapping keys and stable DynamoDB set ordering before hashing with SHA-256.
+
+Consequences:
+
+- an exact retry produces the same token;
+- mapping insertion order does not change the token;
+- a changed `startedAt`, `activatedAt`, condition, item value, table name or operation namespace produces a different token;
+- DynamoDB cannot receive the same token with different transaction parameters from these adapters.
+
 ### Atomic publication
 
 Activation uses a single DynamoDB transaction:
@@ -153,7 +176,10 @@ Unit and contract tests cover:
 
 - DynamoDB type serialization and pagination-independent control operations;
 - conditional versus transient DynamoDB failures;
-- transaction idempotency tokens;
+- canonical transaction token stability for identical serialized payloads;
+- token changes for timestamps, namespaces, tables and transaction values;
+- claim retries with identical and changed `startedAt` timestamps;
+- activation tokens with changed `activatedAt` timestamps;
 - optimistic document revisions;
 - atomic fingerprint claims and fenced terminal-state writes;
 - active, owned and unexpired lease checks during five-item activation;
