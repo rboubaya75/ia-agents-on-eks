@@ -15,9 +15,7 @@ from ia_aws_clients.dynamodb_document_codec import (
     _document_item,
     _fingerprint_key,
     _generation_item,
-    _generation_key,
     _job_item,
-    _job_key,
 )
 from ia_aws_clients.dynamodb_documents import (
     DynamoDocumentIngestionLeaseRepository,
