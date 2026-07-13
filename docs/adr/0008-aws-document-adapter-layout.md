@@ -19,9 +19,13 @@ The low-level DynamoDB adapter serializes values through boto3 type serializers 
 
 - document writes use optimistic `revision` conditions;
 - fingerprint claims create the job and canonical fingerprint marker in one transaction;
+- terminal ingestion-job state writes update the job and fingerprint marker atomically and require the exact current job ID, fingerprint and fencing token;
 - leases use conditional expiration checks and monotonically increasing fencing tokens;
-- activation uses one four-item transaction covering the document pointer, generation status, ingestion job and fingerprint marker;
+- activation uses one five-item transaction covering a current-lease condition check, the document pointer, generation status, ingestion job and fingerprint marker;
+- activation requires the lease owner, source version, unexpired timestamp and fencing token to match the publishing job;
 - deterministic `ClientRequestToken` values make claim and activation retries idempotent;
+- after a non-conditional activation error, the adapter performs strongly consistent reconciliation reads and reports success when the exact atomic commit is visible;
+- candidate cleanup is permitted only when reconciliation does not show a committed activation;
 - only genuine conditional cancellations map to `RepositoryConflictError`; throttling and infrastructure failures remain visible as AWS failures.
 
 ### S3 generation storage
@@ -49,6 +53,8 @@ Queries require an explicit non-empty set of authoritative active generation IDs
 - AWS SDK usage remains isolated under `packages/aws-clients`.
 - The control table and all buckets, indexes, model IDs, regions and optional KMS keys are injected configuration.
 - IAM policies can be scoped separately to the control table, document bucket, vector bucket/index and configured Bedrock models.
-- Activation is atomic for metadata, while chunk/vector data is immutable and generation-scoped.
+- Activation is atomic for metadata and the authoritative lease check, while chunk/vector data is immutable and generation-scoped.
+- A stale worker cannot publish after a newer lease token has been issued or after its own lease has expired.
+- An ambiguous activation response cannot trigger deletion of a generation whose atomic commit is visible.
 - A retriever must first resolve current active generation IDs from trusted document metadata before calling `VectorRepository.query`.
 - PDF/DOCX extraction, document upload APIs, Terraform resources and real AWS integration tests remain deferred.
