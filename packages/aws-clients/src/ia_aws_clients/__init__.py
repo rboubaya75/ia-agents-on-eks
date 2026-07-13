@@ -25,6 +25,7 @@ from ia_aws_clients.dynamodb_documents import (
     DynamoIndexGenerationRepository,
     DynamoIngestionJobRepository,
 )
+from ia_aws_clients.s3_document_sources import S3DocumentSourceStore
 from ia_aws_clients.s3_documents import (
     S3ChunkStore,
     S3JsonStore,
@@ -58,6 +59,7 @@ __all__ = [
     "InvalidBedrockEmbeddingResponseError",
     "InvalidS3VectorResponseError",
     "S3ChunkStore",
+    "S3DocumentSourceStore",
     "S3JsonStore",
     "S3VectorError",
     "S3VectorIndexSettings",
