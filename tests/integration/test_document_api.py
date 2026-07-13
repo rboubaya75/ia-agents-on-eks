@@ -45,9 +45,7 @@ class EmptyChatSessions:
         del tenant_id, session_id
         return None
 
-    async def list_for_user(
-        self, tenant_id: TenantId, user_id: UserId
-    ) -> tuple[ChatSession, ...]:
+    async def list_for_user(self, tenant_id: TenantId, user_id: UserId) -> tuple[ChatSession, ...]:
         del tenant_id, user_id
         return ()
 
@@ -83,23 +81,17 @@ class StubDocuments:
         self.documents[(document.tenant_id, document.document_id)] = document
         return document
 
-    async def create_upload(
-        self, command: CreateSourceUploadCommand
-    ) -> PresignedSourceUpload:
+    async def create_upload(self, command: CreateSourceUploadCommand) -> PresignedSourceUpload:
         return PresignedSourceUpload(
             url="https://upload.example",
             headers={"content-length": str(command.size_bytes)},
             expires_at=command.expires_at,
         )
 
-    async def get_document(
-        self, tenant_id: TenantId, document_id: DocumentId
-    ) -> Document:
+    async def get_document(self, tenant_id: TenantId, document_id: DocumentId) -> Document:
         return self.documents[(tenant_id, document_id)]
 
-    async def start_ingestion(
-        self, command: StartDocumentIngestionCommand
-    ) -> IngestionJob:
+    async def start_ingestion(self, command: StartDocumentIngestionCommand) -> IngestionJob:
         job = IngestionJob(
             tenant_id=command.tenant_id,
             job_id=command.job_id,
@@ -119,13 +111,9 @@ class StubDocuments:
         assert job.document_id == document_id
         return job
 
-    async def delete_document(
-        self, tenant_id: TenantId, document_id: DocumentId
-    ) -> Document:
+    async def delete_document(self, tenant_id: TenantId, document_id: DocumentId) -> Document:
         current = self.documents[(tenant_id, document_id)]
-        deleted = current.model_copy(
-            update={"status": DocumentStatus.DELETED, "updated_at": NOW}
-        )
+        deleted = current.model_copy(update={"status": DocumentStatus.DELETED, "updated_at": NOW})
         self.documents[(tenant_id, document_id)] = deleted
         return deleted
 
@@ -165,6 +153,25 @@ def _client(*, roles: frozenset[Role]) -> tuple[TestClient, StubDocuments]:
 
 def _headers() -> dict[str, str]:
     return {"Authorization": "Bearer token"}
+
+
+def _stored_document(*, allowed_roles: frozenset[Role]) -> Document:
+    return Document(
+        tenant_id=TenantId("tenant-a"),
+        document_id=DocumentId("document-a"),
+        owner_user_id=UserId("admin-a"),
+        title="Policy",
+        source_uri="s3://bucket/source",
+        source_version=CHECKSUM,
+        source_checksum=CHECKSUM,
+        content_type="text/plain",
+        language="fr",
+        classification=Classification.INTERNAL,
+        allowed_roles=allowed_roles,
+        status=DocumentStatus.INDEXED,
+        created_at=NOW,
+        updated_at=NOW,
+    )
 
 
 def test_document_api_lifecycle_derives_tenant_from_principal() -> None:
@@ -260,3 +267,36 @@ def test_document_classification_is_limited_by_trusted_principal() -> None:
 
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "classification_forbidden"
+
+
+def test_ingestion_status_requires_document_read_access() -> None:
+    client, documents = _client(roles=frozenset({Role.USER}))
+    document = _stored_document(allowed_roles=frozenset({Role.SUPPORT}))
+    job = IngestionJob(
+        tenant_id=document.tenant_id,
+        job_id=JobId("job-a"),
+        document_id=document.document_id,
+        source_version=document.source_version,
+        status=IngestionStatus.SUCCEEDED,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    documents.documents[(document.tenant_id, document.document_id)] = document
+    documents.jobs[(job.tenant_id, job.job_id)] = job
+
+    response = client.get(
+        "/api/v1/documents/document-a/ingestions/job-a",
+        headers=_headers(),
+    )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "document_not_found"
+
+
+def test_openapi_document_schema_has_no_tenant_id() -> None:
+    client, _ = _client(roles=frozenset({Role.TENANT_ADMIN}))
+
+    schema = client.get("/api/openapi.json").json()
+    properties = schema["components"]["schemas"]["CreateDocumentRequest"]["properties"]
+
+    assert "tenantId" not in properties
