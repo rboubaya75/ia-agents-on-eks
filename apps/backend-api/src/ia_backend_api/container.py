@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 from uuid import uuid4
 
-from ia_application import ChatSessionCommandRepository
+from ia_application import ChatSessionCommandRepository, DocumentManagement
 from ia_security import TokenVerifier
 
 
@@ -25,6 +25,8 @@ class ApiScopes:
     profile_read: str = "platform/profile.read"
     chat_read: str = "platform/chat.read"
     chat_write: str = "platform/chat.write"
+    document_read: str = "platform/documents.read"
+    document_write: str = "platform/documents.write"
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +34,7 @@ class AppContainer:
     token_verifier: TokenVerifier
     chat_sessions: ChatSessionCommandRepository
     readiness: ReadinessProbe
+    documents: DocumentManagement | None = None
     scopes: ApiScopes = ApiScopes()
     now: Callable[[], datetime] = lambda: datetime.now(UTC)
     new_id: Callable[[], str] = lambda: str(uuid4())
