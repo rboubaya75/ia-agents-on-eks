@@ -75,20 +75,13 @@ class InMemoryIngestionJobRepository:
         if job.fingerprint is not None and job.fencing_token is not None:
             existing = await self.find_by_fingerprint(job.tenant_id, job.fingerprint)
             if existing is not None:
-                if (
-                    existing.job_id != job.job_id
-                    or existing.fencing_token != job.fencing_token
-                ):
-                    raise RepositoryConflictError(
-                        "stale ingestion job state update was rejected"
-                    )
+                if existing.job_id != job.job_id or existing.fencing_token != job.fencing_token:
+                    raise RepositoryConflictError("stale ingestion job state update was rejected")
                 if (
                     existing.status is IngestionStatus.SUCCEEDED
                     and job.status is not IngestionStatus.SUCCEEDED
                 ):
-                    raise RepositoryConflictError(
-                        "succeeded ingestion job cannot be overwritten"
-                    )
+                    raise RepositoryConflictError("succeeded ingestion job cannot be overwritten")
         self._store(job)
 
     async def claim(self, job: IngestionJob) -> IngestionJobClaim:
