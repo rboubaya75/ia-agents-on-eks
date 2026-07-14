@@ -84,10 +84,34 @@ class InMemoryIngestionJobRepository:
                     raise RepositoryConflictError("succeeded ingestion job cannot be overwritten")
         self._store(job)
 
+    async def submit(self, job: IngestionJob) -> IngestionJobClaim:
+        if job.status is not IngestionStatus.PENDING:
+            msg = "submitted ingestion jobs must be pending"
+            raise ValueError(msg)
+        existing = await self.get(job.tenant_id, job.job_id)
+        if existing is not None:
+            if (
+                existing.document_id != job.document_id
+                or existing.source_version != job.source_version
+            ):
+                raise RepositoryConflictError(
+                    "ingestion submission id conflicts with another job"
+                )
+            return IngestionJobClaim(job=existing, acquired=False)
+        self._store(job)
+        return IngestionJobClaim(job=job, acquired=True)
+
     async def claim(self, job: IngestionJob) -> IngestionJobClaim:
         if job.fingerprint is None or job.fencing_token is None:
             msg = "claimed ingestion jobs require a fingerprint and fencing token"
             raise ValueError(msg)
+        current_by_id = await self.get(job.tenant_id, job.job_id)
+        if current_by_id is not None and current_by_id.status is IngestionStatus.PENDING:
+            if (
+                current_by_id.document_id != job.document_id
+                or current_by_id.source_version != job.source_version
+            ):
+                raise RepositoryConflictError("pending ingestion identity changed")
         existing = await self.find_by_fingerprint(job.tenant_id, job.fingerprint)
         if existing is not None and existing.status is IngestionStatus.SUCCEEDED:
             return IngestionJobClaim(job=existing, acquired=False)
