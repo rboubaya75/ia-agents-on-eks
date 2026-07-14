@@ -8,6 +8,20 @@ from test_support import InMemoryIngestionJobRepository
 NOW = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
 
 
+def _pending(job_id: str = "job-a") -> IngestionJob:
+    return IngestionJob(
+        tenant_id=TenantId("tenant-a"),
+        job_id=JobId(job_id),
+        document_id=DocumentId("document-a"),
+        source_version="v1",
+        status=IngestionStatus.PENDING,
+        source_checksum="b" * 64,
+        embedding_model_alias="default",
+        pipeline_version="ingestion-v1",
+        started_at=NOW,
+    )
+
+
 def _job(
     job_id: str,
     status: IngestionStatus = IngestionStatus.RUNNING,
@@ -33,6 +47,41 @@ def _job(
         fencing_token=fencing_token,
         started_at=NOW,
     )
+
+
+@pytest.mark.asyncio
+async def test_pending_submission_is_idempotent_by_job_id() -> None:
+    repository = InMemoryIngestionJobRepository()
+
+    first = await repository.submit(_pending())
+    second = await repository.submit(_pending())
+
+    assert first == IngestionJobClaim(job=_pending(), acquired=True)
+    assert second == IngestionJobClaim(job=_pending(), acquired=False)
+
+
+@pytest.mark.asyncio
+async def test_pending_submission_rejects_job_id_reuse_for_another_document() -> None:
+    repository = InMemoryIngestionJobRepository()
+    await repository.submit(_pending())
+    conflicting = _pending().model_copy(
+        update={"document_id": DocumentId("document-b")}
+    )
+
+    with pytest.raises(RepositoryConflictError, match="conflicts"):
+        await repository.submit(conflicting)
+
+
+@pytest.mark.asyncio
+async def test_pending_job_can_transition_to_fenced_running_claim() -> None:
+    repository = InMemoryIngestionJobRepository()
+    await repository.submit(_pending())
+
+    claimed = await repository.claim(_job("job-a"))
+
+    assert claimed.acquired is True
+    assert claimed.job.status is IngestionStatus.RUNNING
+    assert claimed.job.fencing_token == 1
 
 
 @pytest.mark.asyncio
