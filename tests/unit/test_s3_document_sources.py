@@ -140,11 +140,14 @@ async def test_presigned_upload_targets_temporary_session_key() -> None:
     key = str(params["Key"])
     assert "tenant/a" not in key
     assert "document/a" not in key
-    assert key != store.source_uri(
-        TenantId("tenant/a"),
-        DocumentId("document/a"),
-        "version-a",
-    ).split("/", 3)[-1]
+    assert (
+        key
+        != store.source_uri(
+            TenantId("tenant/a"),
+            DocumentId("document/a"),
+            "version-a",
+        ).split("/", 3)[-1]
+    )
 
 
 @pytest.mark.asyncio
@@ -159,11 +162,14 @@ async def test_promotion_copies_validated_upload_to_immutable_source() -> None:
     copy_calls = [kwargs for action, kwargs in client.calls if action == "copy"]
     assert len(copy_calls) == 1
     assert copy_calls[0]["CopySourceIfMatch"] == '"etag-a"'
-    assert copy_calls[0]["Key"] == store.source_uri(
-        document.tenant_id,
-        document.document_id,
-        document.source_version,
-    ).split("/", 3)[-1]
+    assert (
+        copy_calls[0]["Key"]
+        == store.source_uri(
+            document.tenant_id,
+            document.document_id,
+            document.source_version,
+        ).split("/", 3)[-1]
+    )
     assert any(action == "delete" for action, _ in client.calls)
 
 
