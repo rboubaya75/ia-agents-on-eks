@@ -64,9 +64,7 @@ async def test_pending_submission_is_idempotent_by_job_id() -> None:
 async def test_pending_submission_rejects_job_id_reuse_for_another_document() -> None:
     repository = InMemoryIngestionJobRepository()
     await repository.submit(_pending())
-    conflicting = _pending().model_copy(
-        update={"document_id": DocumentId("document-b")}
-    )
+    conflicting = _pending().model_copy(update={"document_id": DocumentId("document-b")})
 
     with pytest.raises(RepositoryConflictError, match="conflicts"):
         await repository.submit(conflicting)
