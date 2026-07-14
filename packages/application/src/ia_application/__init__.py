@@ -25,7 +25,7 @@ from ia_application.documents import (
 )
 from ia_application.ingestion import (
     ConcurrentDocumentUpdateError,
-    DocumentIngestionService,
+    DocumentIngestionService as BaseDocumentIngestionService,
     DocumentNotFoundError,
     DocumentNotReadyError,
     IngestDocumentCommand,
@@ -77,8 +77,11 @@ from ia_application.reliable_worker import (
     VisibilityExtendingIngestionTaskQueue,
 )
 
+DocumentIngestionService = RecoverableDocumentIngestionService
+
 __all__ = [
     "AgentRuntimeClient",
+    "BaseDocumentIngestionService",
     "ChatMessageRepository",
     "ChatSessionCommandRepository",
     "ChatSessionRepository",
