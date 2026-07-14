@@ -3,7 +3,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol, runtime_checkable
 
-from ia_domain import IngestionJob, IngestionStatus
+from ia_domain import DocumentId, IngestionJob, IngestionStatus, TenantId
 
 from ia_application.documents import (
     DocumentIngestion,
@@ -32,8 +32,8 @@ class RenewableDocumentLeaseRepository(Protocol):
     async def renew(
         self,
         *,
-        tenant_id: object,
-        document_id: object,
+        tenant_id: TenantId,
+        document_id: DocumentId,
         source_version: str,
         owner_token: str,
         expires_at: datetime,
@@ -42,7 +42,7 @@ class RenewableDocumentLeaseRepository(Protocol):
 
 
 @runtime_checkable
-class VisibilityExtendingIngestionTaskQueue(IngestionTaskQueue, Protocol):
+class VisibilityExtendingIngestionTaskQueue(Protocol):
     async def extend_visibility(
         self,
         received: ReceivedIngestionTask,
@@ -56,13 +56,31 @@ class DocumentIngestionWorker:
         self,
         *,
         jobs: IngestionJobRepository,
-        leases: RenewableDocumentLeaseRepository,
-        queue: VisibilityExtendingIngestionTaskQueue,
+        queue: IngestionTaskQueue,
         ingestion: DocumentIngestion,
+        leases: RenewableDocumentLeaseRepository | None = None,
         lease_ttl_seconds: int = 900,
         heartbeat_interval_seconds: int = 60,
         visibility_timeout_seconds: int = 900,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
+        self._jobs = jobs
+        self._queue = queue
+        self._ingestion = ingestion
+        self._leases = leases
+        self._clock = clock
+        self.configure_timing(
+            lease_ttl_seconds=lease_ttl_seconds,
+            heartbeat_interval_seconds=heartbeat_interval_seconds,
+            visibility_timeout_seconds=visibility_timeout_seconds,
+        )
+
+    def configure_timing(
+        self,
+        *,
+        lease_ttl_seconds: int,
+        heartbeat_interval_seconds: int,
+        visibility_timeout_seconds: int,
     ) -> None:
         if lease_ttl_seconds < 30 or lease_ttl_seconds > 3600:
             msg = "lease_ttl_seconds must be between 30 and 3600"
@@ -79,14 +97,9 @@ class DocumentIngestionWorker:
         if heartbeat_interval_seconds >= visibility_timeout_seconds:
             msg = "heartbeat interval must be shorter than the visibility timeout"
             raise ValueError(msg)
-        self._jobs = jobs
-        self._leases = leases
-        self._queue = queue
-        self._ingestion = ingestion
         self._lease_ttl_seconds = lease_ttl_seconds
         self._heartbeat_interval_seconds = heartbeat_interval_seconds
         self._visibility_timeout_seconds = visibility_timeout_seconds
-        self._clock = clock
 
     async def run_once(self, *, wait_seconds: int = 20) -> bool:
         received = await self._queue.receive(wait_seconds=wait_seconds)
@@ -197,10 +210,18 @@ class DocumentIngestionWorker:
         received: ReceivedIngestionTask,
         job: IngestionJob,
     ) -> None:
+        await asyncio.sleep(self._heartbeat_interval_seconds)
+        leases = self._leases
+        if leases is None:
+            candidate = getattr(self._ingestion, "_leases", None)
+            if not isinstance(candidate, RenewableDocumentLeaseRepository):
+                raise IngestionHeartbeatError("ingestion lease repository cannot be renewed")
+            leases = candidate
+        if not isinstance(self._queue, VisibilityExtendingIngestionTaskQueue):
+            raise IngestionHeartbeatError("ingestion queue cannot extend visibility")
         while True:
-            await asyncio.sleep(self._heartbeat_interval_seconds)
             now = self._aware_now()
-            renewed = await self._leases.renew(
+            renewed = await leases.renew(
                 tenant_id=job.tenant_id,
                 document_id=job.document_id,
                 source_version=job.source_version,
@@ -214,6 +235,7 @@ class DocumentIngestionWorker:
                 received,
                 timeout_seconds=self._visibility_timeout_seconds,
             )
+            await asyncio.sleep(self._heartbeat_interval_seconds)
 
     async def _save_reused_result(
         self,
