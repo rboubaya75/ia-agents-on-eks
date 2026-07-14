@@ -135,9 +135,7 @@ class StubDocuments:
     async def delete_document(self, command: DeleteDocumentCommand) -> Document:
         self.last_delete = command
         current = self.documents[(command.tenant_id, command.document_id)]
-        deleted = current.model_copy(
-            update={"status": DocumentStatus.DELETED, "updated_at": NOW}
-        )
+        deleted = current.model_copy(update={"status": DocumentStatus.DELETED, "updated_at": NOW})
         self.documents[(command.tenant_id, command.document_id)] = deleted
         return deleted
 
@@ -378,10 +376,7 @@ def test_all_existing_document_mutations_hide_above_clearance_document() -> None
     )
 
     assert all(response.status_code == 404 for response in responses)
-    assert all(
-        response.json()["error"]["code"] == "document_not_found"
-        for response in responses
-    )
+    assert all(response.json()["error"]["code"] == "document_not_found" for response in responses)
     assert documents.last_submit is None
     assert documents.last_delete is None
 
@@ -414,12 +409,8 @@ def test_openapi_hides_tenant_and_pipeline_configuration() -> None:
     client, _ = _client(roles=frozenset({Role.TENANT_ADMIN}))
 
     schema = client.get("/api/openapi.json").json()
-    create_properties = schema["components"]["schemas"]["CreateDocumentRequest"][
-        "properties"
-    ]
-    ingestion_properties = schema["components"]["schemas"]["StartIngestionRequest"][
-        "properties"
-    ]
+    create_properties = schema["components"]["schemas"]["CreateDocumentRequest"]["properties"]
+    ingestion_properties = schema["components"]["schemas"]["StartIngestionRequest"]["properties"]
 
     assert "tenantId" not in create_properties
     assert "embeddingModelAlias" not in ingestion_properties
