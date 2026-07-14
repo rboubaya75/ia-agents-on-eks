@@ -98,11 +98,9 @@ def _ensure_classification_allowed(
 
 
 def _ensure_document_readable(principal: Principal, document: Document) -> None:
-    if (
-        _CLASSIFICATION_RANK[document.classification]
-        > _CLASSIFICATION_RANK[principal.maximum_classification]
-        or principal.roles.isdisjoint(document.allowed_roles | _DOCUMENT_MANAGERS)
-    ):
+    if _CLASSIFICATION_RANK[document.classification] > _CLASSIFICATION_RANK[
+        principal.maximum_classification
+    ] or principal.roles.isdisjoint(document.allowed_roles | _DOCUMENT_MANAGERS):
         raise ApiError(
             status_code=404,
             code="document_not_found",
@@ -165,9 +163,7 @@ def _ingestion_job_id(
     document_id: str,
     idempotency_key: str,
 ) -> JobId:
-    material = "\x00".join(
-        (str(principal.tenant_id), document_id, idempotency_key)
-    ).encode("utf-8")
+    material = "\x00".join((str(principal.tenant_id), document_id, idempotency_key)).encode("utf-8")
     return JobId(hashlib.sha256(material).hexdigest())
 
 
@@ -394,8 +390,7 @@ def create_app(container: AppContainer) -> FastAPI:
                     document_id=DocumentId(document_id),
                     upload_session_id=dependencies.new_id(),
                     size_bytes=payload.size_bytes,
-                    expires_at=dependencies.now()
-                    + timedelta(seconds=payload.expires_in_seconds),
+                    expires_at=dependencies.now() + timedelta(seconds=payload.expires_in_seconds),
                 )
             )
         except ApiError:
