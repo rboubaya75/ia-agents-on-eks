@@ -227,8 +227,6 @@ def create_application() -> FastAPI:
                 user_index_name=settings.chat_session_user_index,
             ),
             readiness=CompositeReadinessProbe(probes),
-            documents=(
-                None if document_runtime is None else document_runtime.management
-            ),
+            documents=(None if document_runtime is None else document_runtime.management),
         )
     )
