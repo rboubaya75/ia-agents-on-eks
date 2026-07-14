@@ -94,9 +94,7 @@ class InMemoryIngestionJobRepository:
                 existing.document_id != job.document_id
                 or existing.source_version != job.source_version
             ):
-                raise RepositoryConflictError(
-                    "ingestion submission id conflicts with another job"
-                )
+                raise RepositoryConflictError("ingestion submission id conflicts with another job")
             return IngestionJobClaim(job=existing, acquired=False)
         self._store(job)
         return IngestionJobClaim(job=job, acquired=True)
