@@ -351,6 +351,19 @@ class DocumentManagementService(DocumentManagement):
         document = await self.get_document(command.tenant_id, command.document_id)
         if document.status in {DocumentStatus.DELETING, DocumentStatus.DELETED}:
             raise DocumentStateConflictError("document is being deleted")
+
+        existing = await self._jobs.get(command.tenant_id, command.job_id)
+        if existing is not None:
+            if (
+                existing.document_id != document.document_id
+                or existing.source_version != document.source_version
+            ):
+                raise DocumentStateConflictError(
+                    "idempotency key already belongs to another document version"
+                )
+            if existing.status is not IngestionStatus.PENDING:
+                return existing
+
         now = self._aware_now()
         claim = await self._leases.acquire(
             tenant_id=document.tenant_id,
@@ -361,12 +374,14 @@ class DocumentManagementService(DocumentManagement):
             now=now,
         )
         if not claim.acquired:
+            if existing is not None:
+                return existing
             raise DocumentStateConflictError("document version is busy")
         try:
             if document.status is DocumentStatus.PENDING_UPLOAD:
                 if command.upload_session_id is None:
                     raise InvalidDocumentSourceError("an upload session is required")
-                metadata = await self._sources.promote_upload(
+                metadata = await self._promote_or_inspect_source(
                     document,
                     command.upload_session_id,
                 )
@@ -385,10 +400,6 @@ class DocumentManagementService(DocumentManagement):
                     raise DocumentStateConflictError(
                         "document changed before ingestion submission"
                     ) from error
-            elif command.upload_session_id is not None:
-                raise DocumentStateConflictError(
-                    "an upload session cannot replace an immutable source"
-                )
             else:
                 self._validate_source_metadata(
                     document,
@@ -489,6 +500,23 @@ class DocumentManagementService(DocumentManagement):
                 ) from error
         finally:
             await self._leases.release(claim.lease)
+
+    async def _promote_or_inspect_source(
+        self,
+        document: Document,
+        upload_session_id: str,
+    ) -> DocumentSourceMetadata:
+        try:
+            return await self._sources.promote_upload(document, upload_session_id)
+        except FileNotFoundError:
+            try:
+                return await self._sources.inspect(document)
+            except FileNotFoundError as error:
+                raise InvalidDocumentSourceError(
+                    "neither temporary nor immutable document source exists"
+                ) from error
+        except ValueError as error:
+            raise InvalidDocumentSourceError(str(error)) from error
 
     def _validate_source_metadata(
         self, document: Document, metadata: DocumentSourceMetadata
