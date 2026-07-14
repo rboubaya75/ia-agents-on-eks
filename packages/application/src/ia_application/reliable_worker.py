@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import Protocol, runtime_checkable
 
@@ -197,10 +198,8 @@ class DocumentIngestionWorker:
             return await ingestion_task
 
         heartbeat_error = heartbeat_task.exception()
-        try:
+        with suppress(Exception):
             await ingestion_task
-        except Exception:
-            pass
         if heartbeat_error is not None:
             raise heartbeat_error
         raise IngestionHeartbeatError("ingestion heartbeat stopped unexpectedly")
