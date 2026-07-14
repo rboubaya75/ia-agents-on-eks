@@ -266,6 +266,7 @@ async def test_reused_canonical_result_preserves_generation_metadata() -> None:
         document_id=pending.document_id,
         source_version=pending.source_version,
         status=IngestionStatus.SUCCEEDED,
+        fingerprint="f" * 64,
         chunks_created=4,
         vectors_created=4,
         generation_id="canonical-generation",
@@ -290,6 +291,7 @@ async def test_reused_canonical_result_preserves_generation_metadata() -> None:
     alias = await jobs.get(pending.tenant_id, pending.job_id)
     assert alias is not None
     assert alias.status is IngestionStatus.SUCCEEDED
+    assert alias.fingerprint == "f" * 64
     assert alias.generation_id == "canonical-generation"
     assert alias.authorization_checksum == "b" * 64
     assert alias.resolved_embedding_model_id == "model-v2"
