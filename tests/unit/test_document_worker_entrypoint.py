@@ -1,13 +1,10 @@
+import asyncio
 from typing import cast
 
 import pytest
 from ia_backend_api import document_worker
 from ia_backend_api.main import DocumentRuntime
 from ia_backend_api.settings import BackendSettings
-
-
-class StopWorkerError(RuntimeError):
-    pass
 
 
 class FakeWorker:
@@ -30,7 +27,7 @@ class FakeWorker:
 
     async def run_once(self, *, wait_seconds: int = 20) -> bool:
         self.wait_seconds.append(wait_seconds)
-        raise StopWorkerError
+        raise asyncio.CancelledError
 
 
 class FakeSettings:
@@ -70,7 +67,7 @@ async def test_worker_long_polls_runtime(
         lambda settings: runtime,
     )
 
-    with pytest.raises(StopWorkerError):
+    with pytest.raises(asyncio.CancelledError):
         await document_worker.run_worker()
 
     assert worker.timing == (300, 30, 600)
