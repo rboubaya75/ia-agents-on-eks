@@ -1,13 +1,16 @@
+import hashlib
 from datetime import timedelta
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Request, status
+from fastapi import Depends, FastAPI, Header, Request, status
 from ia_application import (
     CreateSourceUploadCommand,
+    DeleteDocumentCommand,
     DocumentDeletionError,
     DocumentManagement,
     DocumentManagementError,
     DocumentStateConflictError,
+    IngestionDispatchError,
     IngestionError,
     InvalidDocumentSourceError,
     ManagedDocumentNotFoundError,
@@ -79,7 +82,10 @@ def _ensure_document_manager(principal: Principal) -> None:
         )
 
 
-def _ensure_classification_allowed(principal: Principal, classification: Classification) -> None:
+def _ensure_classification_allowed(
+    principal: Principal,
+    classification: Classification,
+) -> None:
     if (
         _CLASSIFICATION_RANK[classification]
         > _CLASSIFICATION_RANK[principal.maximum_classification]
@@ -92,8 +98,11 @@ def _ensure_classification_allowed(principal: Principal, classification: Classif
 
 
 def _ensure_document_readable(principal: Principal, document: Document) -> None:
-    _ensure_classification_allowed(principal, document.classification)
-    if principal.roles.isdisjoint(document.allowed_roles | _DOCUMENT_MANAGERS):
+    if (
+        _CLASSIFICATION_RANK[document.classification]
+        > _CLASSIFICATION_RANK[principal.maximum_classification]
+        or principal.roles.isdisjoint(document.allowed_roles | _DOCUMENT_MANAGERS)
+    ):
         raise ApiError(
             status_code=404,
             code="document_not_found",
@@ -126,10 +135,10 @@ def _document_api_error(error: Exception) -> ApiError:
             code="document_state_conflict",
             message=str(error),
         )
-    if isinstance(error, DocumentDeletionError):
+    if isinstance(error, DocumentDeletionError | IngestionDispatchError):
         return ApiError(
             status_code=503,
-            code="document_deletion_incomplete",
+            code="document_operation_incomplete",
             message=str(error),
         )
     if isinstance(error, IngestionError):
@@ -149,6 +158,30 @@ def _document_api_error(error: Exception) -> ApiError:
         code="internal_error",
         message="An unexpected error occurred.",
     )
+
+
+def _ingestion_job_id(
+    principal: Principal,
+    document_id: str,
+    idempotency_key: str,
+) -> JobId:
+    material = "\x00".join(
+        (str(principal.tenant_id), document_id, idempotency_key)
+    ).encode("utf-8")
+    return JobId(hashlib.sha256(material).hexdigest())
+
+
+async def _authorized_document(
+    service: DocumentManagement,
+    principal: Principal,
+    document_id: str,
+) -> Document:
+    document = await service.get_document(
+        principal.tenant_id,
+        DocumentId(document_id),
+    )
+    _ensure_document_readable(principal, document)
+    return document
 
 
 def create_app(container: AppContainer) -> FastAPI:
@@ -224,8 +257,7 @@ def create_app(container: AppContainer) -> FastAPI:
         dependencies: Annotated[AppContainer, Depends(get_container)],
     ) -> SessionResponse:
         ensure_scopes(principal, {dependencies.scopes.chat_write})
-        service = ChatSessionService(dependencies.chat_sessions)
-        session = await service.create(
+        session = await ChatSessionService(dependencies.chat_sessions).create(
             principal=principal,
             session_id=SessionId(dependencies.new_id()),
             title=payload.title,
@@ -353,15 +385,21 @@ def create_app(container: AppContainer) -> FastAPI:
     ) -> SourceUploadResponse:
         ensure_scopes(principal, {dependencies.scopes.document_write})
         _ensure_document_manager(principal)
+        service = _document_service(dependencies)
         try:
-            upload = await _document_service(dependencies).create_upload(
+            await _authorized_document(service, principal, document_id)
+            upload = await service.create_upload(
                 CreateSourceUploadCommand(
                     tenant_id=principal.tenant_id,
                     document_id=DocumentId(document_id),
+                    upload_session_id=dependencies.new_id(),
                     size_bytes=payload.size_bytes,
-                    expires_at=dependencies.now() + timedelta(seconds=payload.expires_in_seconds),
+                    expires_at=dependencies.now()
+                    + timedelta(seconds=payload.expires_in_seconds),
                 )
             )
+        except ApiError:
+            raise
         except Exception as error:
             raise _document_api_error(error) from error
         return SourceUploadResponse(
@@ -384,10 +422,11 @@ def create_app(container: AppContainer) -> FastAPI:
     ) -> DocumentResponse:
         ensure_scopes(principal, {dependencies.scopes.document_read})
         try:
-            document = await _document_service(dependencies).get_document(
-                principal.tenant_id, DocumentId(document_id)
+            document = await _authorized_document(
+                _document_service(dependencies),
+                principal,
+                document_id,
             )
-            _ensure_document_readable(principal, document)
         except ApiError:
             raise
         except Exception as error:
@@ -401,6 +440,7 @@ def create_app(container: AppContainer) -> FastAPI:
     @app.post(
         "/api/v1/documents/{document_id}/ingestions",
         response_model=IngestionJobResponse,
+        status_code=status.HTTP_202_ACCEPTED,
         tags=["documents"],
     )
     async def start_document_ingestion(
@@ -409,19 +449,26 @@ def create_app(container: AppContainer) -> FastAPI:
         request: Request,
         principal: Annotated[Principal, Depends(get_principal)],
         dependencies: Annotated[AppContainer, Depends(get_container)],
+        idempotency_key: Annotated[
+            str,
+            Header(alias="Idempotency-Key", min_length=1, max_length=128),
+        ],
     ) -> IngestionJobResponse:
         ensure_scopes(principal, {dependencies.scopes.document_write})
         _ensure_document_manager(principal)
+        service = _document_service(dependencies)
         try:
-            job = await _document_service(dependencies).start_ingestion(
+            await _authorized_document(service, principal, document_id)
+            job = await service.submit_ingestion(
                 StartDocumentIngestionCommand(
                     tenant_id=principal.tenant_id,
                     document_id=DocumentId(document_id),
-                    job_id=JobId(dependencies.new_id()),
-                    embedding_model_alias=payload.embedding_model_alias,
-                    pipeline_version=payload.pipeline_version,
+                    job_id=_ingestion_job_id(principal, document_id, idempotency_key),
+                    upload_session_id=payload.upload_session_id,
                 )
             )
+        except ApiError:
+            raise
         except Exception as error:
             raise _document_api_error(error) from error
         return IngestionJobResponse(
@@ -445,11 +492,7 @@ def create_app(container: AppContainer) -> FastAPI:
         ensure_scopes(principal, {dependencies.scopes.document_read})
         service = _document_service(dependencies)
         try:
-            document = await service.get_document(
-                principal.tenant_id,
-                DocumentId(document_id),
-            )
-            _ensure_document_readable(principal, document)
+            await _authorized_document(service, principal, document_id)
             job = await service.get_job(
                 principal.tenant_id,
                 DocumentId(document_id),
@@ -478,11 +521,18 @@ def create_app(container: AppContainer) -> FastAPI:
     ) -> DeleteDocumentResponse:
         ensure_scopes(principal, {dependencies.scopes.document_write})
         _ensure_document_manager(principal)
+        service = _document_service(dependencies)
         try:
-            deleted = await _document_service(dependencies).delete_document(
-                principal.tenant_id,
-                DocumentId(document_id),
+            await _authorized_document(service, principal, document_id)
+            deleted = await service.delete_document(
+                DeleteDocumentCommand(
+                    tenant_id=principal.tenant_id,
+                    document_id=DocumentId(document_id),
+                    operation_id=dependencies.new_id(),
+                )
             )
+        except ApiError:
+            raise
         except Exception as error:
             raise _document_api_error(error) from error
         return DeleteDocumentResponse(
