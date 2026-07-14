@@ -4,7 +4,6 @@ from ia_application.documents import (
     DeleteDocumentCommand,
     DocumentDeletionError,
     DocumentIngestion,
-    DocumentIngestionWorker,
     DocumentManagement,
     DocumentManagementError,
     DocumentManagementService,
@@ -70,6 +69,13 @@ from ia_application.ports import (
     VectorRecord,
     VectorRepository,
 )
+from ia_application.recoverable_ingestion import RecoverableDocumentIngestionService
+from ia_application.reliable_worker import (
+    DocumentIngestionWorker,
+    IngestionHeartbeatError,
+    RenewableDocumentLeaseRepository,
+    VisibilityExtendingIngestionTaskQueue,
+)
 
 __all__ = [
     "AgentRuntimeClient",
@@ -109,6 +115,7 @@ __all__ = [
     "IngestionDispatchError",
     "IngestionError",
     "IngestionFailedError",
+    "IngestionHeartbeatError",
     "IngestionInProgressError",
     "IngestionJobClaim",
     "IngestionJobRepository",
@@ -126,7 +133,9 @@ __all__ = [
     "ParagraphChunker",
     "PresignedSourceUpload",
     "ReceivedIngestionTask",
+    "RecoverableDocumentIngestionService",
     "RegisterDocumentCommand",
+    "RenewableDocumentLeaseRepository",
     "RepositoryConflictError",
     "SecretsProvider",
     "StartDocumentIngestionCommand",
@@ -139,4 +148,5 @@ __all__ = [
     "VectorQuery",
     "VectorRecord",
     "VectorRepository",
+    "VisibilityExtendingIngestionTaskQueue",
 ]
