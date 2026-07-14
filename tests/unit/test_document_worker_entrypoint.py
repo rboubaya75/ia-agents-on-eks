@@ -6,7 +6,7 @@ from ia_backend_api.main import DocumentRuntime
 from ia_backend_api.settings import BackendSettings
 
 
-class StopWorker(RuntimeError):
+class StopWorkerError(RuntimeError):
     pass
 
 
@@ -16,7 +16,7 @@ class FakeWorker:
 
     async def run_once(self, *, wait_seconds: int = 20) -> bool:
         self.wait_seconds.append(wait_seconds)
-        raise StopWorker
+        raise StopWorkerError
 
 
 def _settings() -> BackendSettings:
@@ -50,7 +50,7 @@ async def test_worker_long_polls_runtime(
         lambda settings: runtime,
     )
 
-    with pytest.raises(StopWorker):
+    with pytest.raises(StopWorkerError):
         await document_worker.run_worker()
 
     assert worker.wait_seconds == [20]
