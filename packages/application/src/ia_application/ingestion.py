@@ -370,7 +370,11 @@ class DocumentIngestionService:
     ) -> None:
         with suppress(Exception):
             current = await self._documents.get(original.tenant_id, original.document_id)
-            if current is None or current.active_generation_id is not None:
+            if (
+                current is None
+                or current.status is not DocumentStatus.PROCESSING
+                or current.active_generation_id is not None
+            ):
                 return
             await self._documents.save(
                 current.model_copy(
