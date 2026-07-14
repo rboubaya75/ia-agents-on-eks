@@ -72,7 +72,6 @@ class BackendSettings(BaseSettings):
         missing = sorted(name for name, value in required.items() if value is None)
         if missing:
             raise ValueError(
-                "document API is enabled but required settings are missing: "
-                + ", ".join(missing)
+                "document API is enabled but required settings are missing: " + ", ".join(missing)
             )
         return self
