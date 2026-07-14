@@ -43,6 +43,14 @@ class BackendSettings(BaseSettings):
         int,
         Field(ge=30, le=43_200),
     ] = 900
+    document_ingestion_lease_ttl_seconds: Annotated[
+        int,
+        Field(ge=30, le=3600),
+    ] = 900
+    document_ingestion_heartbeat_interval_seconds: Annotated[
+        int,
+        Field(ge=1, le=300),
+    ] = 60
 
     vector_bucket_name: str | None = Field(default=None, min_length=1, max_length=63)
     vector_index_name: str | None = Field(default=None, min_length=1, max_length=63)
@@ -73,5 +81,21 @@ class BackendSettings(BaseSettings):
         if missing:
             raise ValueError(
                 "document API is enabled but required settings are missing: " + ", ".join(missing)
+            )
+        if self.document_queue_visibility_timeout_seconds < self.document_ingestion_lease_ttl_seconds:
+            raise ValueError(
+                "document queue visibility timeout must be at least the ingestion lease TTL"
+            )
+        if (
+            self.document_ingestion_heartbeat_interval_seconds
+            >= self.document_ingestion_lease_ttl_seconds
+        ):
+            raise ValueError("document ingestion heartbeat must be shorter than the lease TTL")
+        if (
+            self.document_ingestion_heartbeat_interval_seconds
+            >= self.document_queue_visibility_timeout_seconds
+        ):
+            raise ValueError(
+                "document ingestion heartbeat must be shorter than the queue visibility timeout"
             )
         return self
