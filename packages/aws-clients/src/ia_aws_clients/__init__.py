@@ -38,6 +38,7 @@ from ia_aws_clients.s3_vectors import (
     S3VectorIndexSettings,
     S3VectorRepository,
 )
+from ia_aws_clients.sqs_ingestion import SqsIngestionTaskQueue
 
 __all__ = [
     "BedrockEmbeddingError",
@@ -65,6 +66,7 @@ __all__ = [
     "S3VectorIndexSettings",
     "S3VectorKeyManifestStore",
     "S3VectorRepository",
+    "SqsIngestionTaskQueue",
     "TitanEmbeddingProfileSettings",
     "UnknownEmbeddingProfileError",
     "VectorKeyManifestStore",
