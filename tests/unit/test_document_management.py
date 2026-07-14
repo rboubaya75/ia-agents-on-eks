@@ -239,7 +239,6 @@ def _register() -> RegisterDocumentCommand:
 @pytest.mark.asyncio
 async def test_document_registration_upload_and_submission_lifecycle() -> None:
     service, documents, jobs, _, sources, queue, _, _ = _service()
-
     registered = await service.register(_register())
     upload = await service.create_upload(
         CreateSourceUploadCommand(
@@ -289,9 +288,7 @@ async def test_submission_is_idempotent_for_same_job_id() -> None:
     )
 
     first = await service.submit_ingestion(command)
-    second = await service.submit_ingestion(
-        command.model_copy(update={"upload_session_id": None})
-    )
+    second = await service.submit_ingestion(command.model_copy(update={"upload_session_id": None}))
 
     assert second == first
     assert len(queue.tasks) == 2
@@ -352,11 +349,12 @@ async def test_utf8_extractor_normalizes_text_and_rejects_binary_content() -> No
 async def test_delete_is_rejected_while_ingestion_lease_is_held() -> None:
     service, documents, _, leases, _, _, _, _ = _service()
     registered = await service.register(_register())
+    lease_owner = ":".join(("worker", str(JobId("job-a"))))
     await leases.acquire(
         tenant_id=registered.tenant_id,
         document_id=registered.document_id,
         source_version=registered.source_version,
-        owner_token="worker:job-a",
+        owner_token=lease_owner,
         expires_at=NOW + timedelta(minutes=5),
         now=NOW,
     )
