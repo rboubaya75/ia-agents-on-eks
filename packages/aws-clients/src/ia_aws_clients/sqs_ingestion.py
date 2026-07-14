@@ -7,6 +7,7 @@ from ia_application import (
     IngestionTaskQueue,
     ReceivedIngestionTask,
 )
+from pydantic import ValidationError
 
 
 class Boto3SqsClient(Protocol):
@@ -15,6 +16,8 @@ class Boto3SqsClient(Protocol):
     def receive_message(self, **kwargs: object) -> dict[str, object]: ...
 
     def delete_message(self, **kwargs: object) -> dict[str, object]: ...
+
+    def change_message_visibility(self, **kwargs: object) -> dict[str, object]: ...
 
     def get_queue_attributes(self, **kwargs: object) -> dict[str, object]: ...
 
@@ -87,14 +90,23 @@ class SqsIngestionTaskQueue(IngestionTaskQueue):
         if not isinstance(message, Mapping):
             msg = "SQS returned an invalid message"
             raise RuntimeError(msg)
-        body = message.get("Body")
         receipt_handle = message.get("ReceiptHandle")
-        if not isinstance(body, str) or not isinstance(receipt_handle, str):
-            msg = "SQS message is missing body or receipt handle"
+        if not isinstance(receipt_handle, str) or not receipt_handle:
+            msg = "SQS message is missing a receipt handle"
             raise RuntimeError(msg)
+        self._validate_receive_count(message)
+        body = message.get("Body")
+        if not isinstance(body, str):
+            return None
+        try:
+            task = IngestionTask.model_validate_json(body)
+        except ValidationError:
+            # Do not delete or alter poison messages. SQS retains the receipt and
+            # ApproximateReceiveCount so the configured redrive policy can move them.
+            return None
         return ReceivedIngestionTask(
             receipt_handle=receipt_handle,
-            task=IngestionTask.model_validate_json(body),
+            task=task,
         )
 
     async def acknowledge(self, received: ReceivedIngestionTask) -> None:
@@ -102,6 +114,22 @@ class SqsIngestionTaskQueue(IngestionTaskQueue):
             self._client.delete_message,
             QueueUrl=self._queue_url,
             ReceiptHandle=received.receipt_handle,
+        )
+
+    async def extend_visibility(
+        self,
+        received: ReceivedIngestionTask,
+        *,
+        timeout_seconds: int,
+    ) -> None:
+        if timeout_seconds < 30 or timeout_seconds > 43_200:
+            msg = "visibility timeout must be between 30 and 43200 seconds"
+            raise ValueError(msg)
+        await asyncio.to_thread(
+            self._client.change_message_visibility,
+            QueueUrl=self._queue_url,
+            ReceiptHandle=received.receipt_handle,
+            VisibilityTimeout=timeout_seconds,
         )
 
     async def is_ready(self) -> bool:
@@ -119,3 +147,15 @@ class SqsIngestionTaskQueue(IngestionTaskQueue):
             and isinstance(attributes.get("QueueArn"), str)
             and bool(attributes.get("QueueArn"))
         )
+
+    @staticmethod
+    def _validate_receive_count(message: Mapping[object, object]) -> None:
+        attributes = message.get("Attributes")
+        if not isinstance(attributes, Mapping):
+            return
+        raw_count = attributes.get("ApproximateReceiveCount")
+        if raw_count is None:
+            return
+        if not isinstance(raw_count, str) or not raw_count.isdigit():
+            msg = "SQS message has an invalid receive count"
+            raise RuntimeError(msg)
