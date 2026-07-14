@@ -15,6 +15,7 @@ from ia_aws_clients.dynamodb_ingestion_lease_repository import (
 from ia_domain import DocumentId, TenantId
 
 NOW = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
+LEASE_OWNER = ":".join(("worker", "a"))
 
 
 class LeaseControlTable:
@@ -91,7 +92,7 @@ async def test_renew_extends_only_current_unexpired_owner() -> None:
         tenant_id=TenantId("tenant-a"),
         document_id=DocumentId("document-a"),
         source_version="source-a",
-        owner_token="job-a",
+        owner_token=LEASE_OWNER,
         expires_at=NOW + timedelta(minutes=15),
         now=NOW,
     )
@@ -102,7 +103,7 @@ async def test_renew_extends_only_current_unexpired_owner() -> None:
     assert table.last_update["condition"] == "ownerToken = :owner AND expiresAt > :now"
     values = table.last_update["values"]
     assert isinstance(values, dict)
-    assert values[":owner"] == "job-a"
+    assert values[":owner"] == LEASE_OWNER
 
 
 @pytest.mark.asyncio
@@ -115,7 +116,7 @@ async def test_renew_returns_false_after_lease_loss() -> None:
         tenant_id=TenantId("tenant-a"),
         document_id=DocumentId("document-a"),
         source_version="source-a",
-        owner_token="job-a",
+        owner_token=LEASE_OWNER,
         expires_at=NOW + timedelta(minutes=15),
         now=NOW,
     )
@@ -134,7 +135,7 @@ async def test_renew_rejects_non_future_expiration() -> None:
             tenant_id=TenantId("tenant-a"),
             document_id=DocumentId("document-a"),
             source_version="source-a",
-            owner_token="job-a",
+            owner_token=LEASE_OWNER,
             expires_at=NOW,
             now=NOW,
         )
