@@ -13,14 +13,34 @@ class StopWorkerError(RuntimeError):
 class FakeWorker:
     def __init__(self) -> None:
         self.wait_seconds: list[int] = []
+        self.timing: tuple[int, int, int] | None = None
+
+    def configure_timing(
+        self,
+        *,
+        lease_ttl_seconds: int,
+        heartbeat_interval_seconds: int,
+        visibility_timeout_seconds: int,
+    ) -> None:
+        self.timing = (
+            lease_ttl_seconds,
+            heartbeat_interval_seconds,
+            visibility_timeout_seconds,
+        )
 
     async def run_once(self, *, wait_seconds: int = 20) -> bool:
         self.wait_seconds.append(wait_seconds)
         raise StopWorkerError
 
 
+class FakeSettings:
+    document_ingestion_lease_ttl_seconds = 300
+    document_ingestion_heartbeat_interval_seconds = 30
+    document_queue_visibility_timeout_seconds = 600
+
+
 def _settings() -> BackendSettings:
-    return cast(BackendSettings, object())
+    return cast(BackendSettings, FakeSettings())
 
 
 @pytest.mark.asyncio
@@ -53,4 +73,5 @@ async def test_worker_long_polls_runtime(
     with pytest.raises(StopWorkerError):
         await document_worker.run_worker()
 
+    assert worker.timing == (300, 30, 600)
     assert worker.wait_seconds == [20]
