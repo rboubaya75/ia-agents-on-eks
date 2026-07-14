@@ -128,8 +128,7 @@ class CreateUploadRequest(ApiModel):
 
 
 class StartIngestionRequest(ApiModel):
-    embedding_model_alias: Annotated[str, Field(min_length=1, max_length=128)] = "default"
-    pipeline_version: Annotated[str, Field(min_length=1, max_length=128)] = "ingestion-v1"
+    upload_session_id: Annotated[str, Field(min_length=1, max_length=128)] | None = None
 
 
 class DocumentView(ApiModel):
@@ -173,6 +172,7 @@ class DocumentResponse(ApiModel):
 
 
 class SourceUploadView(ApiModel):
+    upload_session_id: str
     url: str
     method: str
     headers: dict[str, str]
@@ -181,6 +181,7 @@ class SourceUploadView(ApiModel):
     @classmethod
     def from_application(cls, upload: PresignedSourceUpload) -> "SourceUploadView":
         return cls(
+            upload_session_id=upload.upload_session_id,
             url=upload.url,
             method=upload.method,
             headers=upload.headers,
