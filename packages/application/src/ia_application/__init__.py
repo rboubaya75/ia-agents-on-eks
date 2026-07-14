@@ -24,7 +24,6 @@ from ia_application.documents import (
     Utf8DocumentExtractor,
 )
 from ia_application.ingestion import (
-    DocumentIngestionService as BaseDocumentIngestionService,
     ConcurrentDocumentUpdateError,
     DocumentNotFoundError,
     DocumentNotReadyError,
@@ -81,7 +80,6 @@ DocumentIngestionService = RecoverableDocumentIngestionService
 
 __all__ = [
     "AgentRuntimeClient",
-    "BaseDocumentIngestionService",
     "ChatMessageRepository",
     "ChatSessionCommandRepository",
     "ChatSessionRepository",
