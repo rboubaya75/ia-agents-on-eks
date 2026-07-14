@@ -24,8 +24,8 @@ from ia_application.documents import (
     Utf8DocumentExtractor,
 )
 from ia_application.ingestion import (
-    ConcurrentDocumentUpdateError,
     DocumentIngestionService as BaseDocumentIngestionService,
+    ConcurrentDocumentUpdateError,
     DocumentNotFoundError,
     DocumentNotReadyError,
     IngestDocumentCommand,
