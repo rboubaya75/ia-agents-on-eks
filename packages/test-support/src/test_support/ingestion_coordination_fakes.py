@@ -106,12 +106,15 @@ class InMemoryIngestionJobRepository:
             msg = "claimed ingestion jobs require a fingerprint and fencing token"
             raise ValueError(msg)
         current_by_id = await self.get(job.tenant_id, job.job_id)
-        if current_by_id is not None and current_by_id.status is IngestionStatus.PENDING:
-            if (
+        if (
+            current_by_id is not None
+            and current_by_id.status is IngestionStatus.PENDING
+            and (
                 current_by_id.document_id != job.document_id
                 or current_by_id.source_version != job.source_version
-            ):
-                raise RepositoryConflictError("pending ingestion identity changed")
+            )
+        ):
+            raise RepositoryConflictError("pending ingestion identity changed")
         existing = await self.find_by_fingerprint(job.tenant_id, job.fingerprint)
         if existing is not None and existing.status is IngestionStatus.SUCCEEDED:
             return IngestionJobClaim(job=existing, acquired=False)
