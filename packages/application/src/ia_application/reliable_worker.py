@@ -117,12 +117,6 @@ class DocumentIngestionWorker:
         if job.status is IngestionStatus.FAILED and job.error_code not in _RETRYABLE_FAILURE_CODES:
             await self._queue.acknowledge(received)
             return True
-        if job.status not in {
-            IngestionStatus.PENDING,
-            IngestionStatus.RUNNING,
-            IngestionStatus.FAILED,
-        }:
-            return False
         if job.embedding_model_alias is None or job.pipeline_version is None:
             await self._fail_job(job, "INVALID_PENDING_JOB")
             await self._queue.acknowledge(received)
