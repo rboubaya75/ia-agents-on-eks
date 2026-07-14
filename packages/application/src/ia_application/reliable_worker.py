@@ -239,6 +239,7 @@ class DocumentIngestionWorker:
                     "chunks_created": result.chunks_created,
                     "vectors_created": result.vectors_created,
                     "error_code": result.error_code,
+                    "fingerprint": result.fingerprint,
                     "generation_id": result.generation_id,
                     "source_checksum": result.source_checksum,
                     "authorization_checksum": result.authorization_checksum,
