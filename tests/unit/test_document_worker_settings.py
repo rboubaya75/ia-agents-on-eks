@@ -54,5 +54,5 @@ def test_document_worker_timing_defaults_are_coherent() -> None:
     ),
 )
 def test_document_worker_rejects_incoherent_timing(overrides: dict[str, object]) -> None:
-    with pytest.raises(ValidationError, match="document ingestion|visibility timeout"):
+    with pytest.raises(ValidationError, match=r"document ingestion|visibility timeout"):
         _settings(**overrides)
