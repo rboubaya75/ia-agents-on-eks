@@ -25,6 +25,11 @@ from ia_aws_clients.dynamodb_documents import (
     DynamoIndexGenerationRepository,
     DynamoIngestionJobRepository,
 )
+from ia_aws_clients.readiness import (
+    DynamoControlReadinessProbe,
+    EmbeddingProfileReadinessProbe,
+    S3VectorIndexReadinessProbe,
+)
 from ia_aws_clients.s3_document_sources import S3DocumentSourceStore
 from ia_aws_clients.s3_documents import (
     S3ChunkStore,
@@ -48,6 +53,7 @@ __all__ = [
     "DynamoChatMessageRepository",
     "DynamoChatSessionRepository",
     "DynamoConditionFailedError",
+    "DynamoControlReadinessProbe",
     "DynamoControlTable",
     "DynamoDocumentIngestionLeaseRepository",
     "DynamoDocumentRepository",
@@ -57,6 +63,7 @@ __all__ = [
     "DynamoTable",
     "DynamoUsageRecordRepository",
     "DynamoUserProfileRepository",
+    "EmbeddingProfileReadinessProbe",
     "InvalidBedrockEmbeddingResponseError",
     "InvalidS3VectorResponseError",
     "S3ChunkStore",
@@ -64,6 +71,7 @@ __all__ = [
     "S3JsonStore",
     "S3VectorError",
     "S3VectorIndexSettings",
+    "S3VectorIndexReadinessProbe",
     "S3VectorKeyManifestStore",
     "S3VectorRepository",
     "SqsIngestionTaskQueue",
