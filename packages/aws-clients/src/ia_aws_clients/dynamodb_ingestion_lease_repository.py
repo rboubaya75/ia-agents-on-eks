@@ -74,6 +74,34 @@ class DynamoDocumentIngestionLeaseRepository(DocumentIngestionLeaseRepository):
             return IngestionLeaseClaim(lease=_decode_lease(blocked_item), acquired=False)
         return IngestionLeaseClaim(lease=_decode_lease(updated), acquired=True)
 
+    async def renew(
+        self,
+        *,
+        tenant_id: TenantId,
+        document_id: DocumentId,
+        source_version: str,
+        owner_token: str,
+        expires_at: datetime,
+        now: datetime,
+    ) -> bool:
+        if expires_at <= now:
+            msg = "lease expiration must be after now"
+            raise ValueError(msg)
+        try:
+            await self._table.update_item(
+                _lease_key(tenant_id, document_id, source_version),
+                update_expression="SET expiresAt = :expires",
+                condition_expression="ownerToken = :owner AND expiresAt > :now",
+                expression_attribute_values={
+                    ":owner": owner_token,
+                    ":expires": _iso(expires_at),
+                    ":now": _iso(now),
+                },
+            )
+        except DynamoConditionFailedError:
+            return False
+        return True
+
     async def release(self, lease: IngestionLease) -> None:
         try:
             await self._table.delete_item(
