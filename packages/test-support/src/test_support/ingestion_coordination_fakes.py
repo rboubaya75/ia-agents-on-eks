@@ -71,11 +71,7 @@ class InMemoryDocumentIngestionLeaseRepository:
     ) -> bool:
         key = (tenant_id, document_id, source_version)
         current = self._leases.get(key)
-        if (
-            current is None
-            or current.owner_token != owner_token
-            or current.expires_at <= now
-        ):
+        if current is None or current.owner_token != owner_token or current.expires_at <= now:
             return False
         self._leases[key] = current.model_copy(update={"expires_at": expires_at})
         return True
