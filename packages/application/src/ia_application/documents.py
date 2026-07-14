@@ -248,8 +248,7 @@ class Utf8DocumentExtractor(TextExtractor):
             raise InvalidDocumentSourceError("document source is not valid UTF-8") from error
         normalized = text.replace("\r\n", "\n").replace("\r", "\n")
         if any(
-            (ord(character) < 32 and character not in {"\n", "\t", "\f"})
-            or ord(character) == 127
+            (ord(character) < 32 and character not in {"\n", "\t", "\f"}) or ord(character) == 127
             for character in normalized
         ):
             raise InvalidDocumentSourceError(
@@ -358,8 +357,7 @@ class DocumentManagementService(DocumentManagement):
             document_id=document.document_id,
             source_version=document.source_version,
             owner_token=f"submit:{command.job_id}",
-            expires_at=now
-            + timedelta(seconds=self._pipeline.submission_lease_ttl_seconds),
+            expires_at=now + timedelta(seconds=self._pipeline.submission_lease_ttl_seconds),
             now=now,
         )
         if not claim.acquired:
