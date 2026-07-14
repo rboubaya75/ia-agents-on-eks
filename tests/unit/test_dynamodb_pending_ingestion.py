@@ -64,9 +64,7 @@ async def test_dynamo_submission_rejects_job_id_reuse_for_another_document() -> 
     table = RecordingControlTable()
     repository = DynamoIngestionJobRepository(cast(DynamoControlTable, table))
     await repository.submit(_pending())
-    conflicting = _pending().model_copy(
-        update={"document_id": DocumentId("document-b")}
-    )
+    conflicting = _pending().model_copy(update={"document_id": DocumentId("document-b")})
 
     with pytest.raises(RepositoryConflictError, match="conflicts"):
         await repository.submit(conflicting)
