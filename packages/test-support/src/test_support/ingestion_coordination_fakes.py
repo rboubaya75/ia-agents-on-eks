@@ -59,6 +59,27 @@ class InMemoryDocumentIngestionLeaseRepository:
         self._leases[key] = lease
         return IngestionLeaseClaim(lease=lease, acquired=True)
 
+    async def renew(
+        self,
+        *,
+        tenant_id: TenantId,
+        document_id: DocumentId,
+        source_version: str,
+        owner_token: str,
+        expires_at: datetime,
+        now: datetime,
+    ) -> bool:
+        key = (tenant_id, document_id, source_version)
+        current = self._leases.get(key)
+        if (
+            current is None
+            or current.owner_token != owner_token
+            or current.expires_at <= now
+        ):
+            return False
+        self._leases[key] = current.model_copy(update={"expires_at": expires_at})
+        return True
+
     async def release(self, lease: IngestionLease) -> None:
         key = (lease.tenant_id, lease.document_id, lease.source_version)
         current = self._leases.get(key)
