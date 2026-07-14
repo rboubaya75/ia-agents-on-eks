@@ -25,6 +25,10 @@ class RecordingSqsClient:
         self.calls.append(("delete", kwargs))
         return {}
 
+    def change_message_visibility(self, **kwargs: object) -> dict[str, object]:
+        self.calls.append(("visibility", kwargs))
+        return {}
+
     def get_queue_attributes(self, **kwargs: object) -> dict[str, object]:
         self.calls.append(("attributes", kwargs))
         if not self.ready:
@@ -78,7 +82,7 @@ async def test_fifo_queue_uses_document_group_and_job_deduplication() -> None:
 
 
 @pytest.mark.asyncio
-async def test_receive_and_acknowledge_message() -> None:
+async def test_receive_acknowledge_and_extend_visibility() -> None:
     client = RecordingSqsClient()
     client.messages = [
         {
@@ -96,8 +100,10 @@ async def test_receive_and_acknowledge_message() -> None:
         task=_task(),
     )
     assert received is not None
+    await queue.extend_visibility(received, timeout_seconds=300)
     await queue.acknowledge(received)
-    assert [action for action, _ in client.calls][-1] == "delete"
+    assert [action for action, _ in client.calls][-2:] == ["visibility", "delete"]
+    assert client.calls[-2][1]["VisibilityTimeout"] == 300
 
 
 @pytest.mark.asyncio
@@ -117,13 +123,62 @@ async def test_receive_rejects_invalid_long_poll(wait_seconds: int) -> None:
 
 
 @pytest.mark.asyncio
-async def test_receive_rejects_malformed_message() -> None:
+async def test_receive_rejects_message_without_receipt_handle() -> None:
     client = RecordingSqsClient()
     client.messages = [{"Body": _task().model_dump_json()}]
     queue = _queue(client)
 
     with pytest.raises(RuntimeError, match="receipt handle"):
         await queue.receive(wait_seconds=0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    (
+        "not-json",
+        '{"tenant_id":"tenant-a"}',
+        '{"tenant_id":"tenant-a","document_id":"document-a","job_id":"job-a","extra":1}',
+    ),
+)
+async def test_poison_message_is_left_for_sqs_redrive(body: str) -> None:
+    client = RecordingSqsClient()
+    client.messages = [
+        {
+            "Body": body,
+            "ReceiptHandle": "receipt-poison",
+            "Attributes": {"ApproximateReceiveCount": "3"},
+        }
+    ]
+    queue = _queue(client)
+
+    assert await queue.receive(wait_seconds=0) is None
+    assert "delete" not in [action for action, _ in client.calls]
+    assert "visibility" not in [action for action, _ in client.calls]
+
+
+@pytest.mark.asyncio
+async def test_receive_rejects_invalid_receive_count() -> None:
+    client = RecordingSqsClient()
+    client.messages = [
+        {
+            "Body": _task().model_dump_json(),
+            "ReceiptHandle": "receipt-a",
+            "Attributes": {"ApproximateReceiveCount": "invalid"},
+        }
+    ]
+
+    with pytest.raises(RuntimeError, match="receive count"):
+        await _queue(client).receive(wait_seconds=0)
+
+
+@pytest.mark.asyncio
+async def test_extend_visibility_rejects_invalid_timeout() -> None:
+    queue = _queue(RecordingSqsClient())
+    received = ReceivedIngestionTask(receipt_handle="receipt-a", task=_task())
+
+    with pytest.raises(ValueError, match="between 30 and 43200"):
+        await queue.extend_visibility(received, timeout_seconds=29)
 
 
 @pytest.mark.asyncio
