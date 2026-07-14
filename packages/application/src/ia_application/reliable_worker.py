@@ -114,10 +114,7 @@ class DocumentIngestionWorker:
         if job.status is IngestionStatus.SUCCEEDED:
             await self._queue.acknowledge(received)
             return True
-        if (
-            job.status is IngestionStatus.FAILED
-            and job.error_code not in _RETRYABLE_FAILURE_CODES
-        ):
+        if job.status is IngestionStatus.FAILED and job.error_code not in _RETRYABLE_FAILURE_CODES:
             await self._queue.acknowledge(received)
             return True
         if job.status not in {
