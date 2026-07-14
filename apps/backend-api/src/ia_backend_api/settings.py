@@ -82,7 +82,10 @@ class BackendSettings(BaseSettings):
             raise ValueError(
                 "document API is enabled but required settings are missing: " + ", ".join(missing)
             )
-        if self.document_queue_visibility_timeout_seconds < self.document_ingestion_lease_ttl_seconds:
+        if (
+            self.document_queue_visibility_timeout_seconds
+            < self.document_ingestion_lease_ttl_seconds
+        ):
             raise ValueError(
                 "document queue visibility timeout must be at least the ingestion lease TTL"
             )
