@@ -25,7 +25,7 @@ def _settings(**overrides: object) -> BackendSettings:
         "document_pipeline_version": "pipeline-v1",
     }
     values.update(overrides)
-    return BackendSettings(**values)
+    return BackendSettings.model_validate(values)
 
 
 def test_document_worker_timing_defaults_are_coherent() -> None:
