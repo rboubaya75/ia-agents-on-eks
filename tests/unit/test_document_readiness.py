@@ -69,9 +69,7 @@ class FakeEmbeddingProvider:
 @pytest.mark.asyncio
 async def test_dynamo_control_readiness_handles_success_and_failure() -> None:
     ready = DynamoControlReadinessProbe(cast(DynamoControlTable, FakeControlTable()))
-    failed = DynamoControlReadinessProbe(
-        cast(DynamoControlTable, FakeControlTable(fail=True))
-    )
+    failed = DynamoControlReadinessProbe(cast(DynamoControlTable, FakeControlTable(fail=True)))
 
     assert await ready.is_ready() is True
     assert await failed.is_ready() is False
@@ -90,9 +88,7 @@ async def test_vector_readiness_uses_configured_index_reference() -> None:
     )
 
     assert await probe.is_ready() is True
-    assert client.calls == [
-        {"vectorBucketName": "vector-bucket", "indexName": "documents"}
-    ]
+    assert client.calls == [{"vectorBucketName": "vector-bucket", "indexName": "documents"}]
 
     client.fail = True
     assert await probe.is_ready() is False
@@ -130,20 +126,24 @@ async def test_embedding_profile_readiness_checks_expected_alias() -> None:
 
 @pytest.mark.asyncio
 async def test_composite_readiness_fails_closed() -> None:
-    assert await CompositeReadinessProbe(
-        (StaticReadinessProbe(), StaticReadinessProbe())
-    ).is_ready() is True
-    assert await CompositeReadinessProbe(
-        (StaticReadinessProbe(), StaticReadinessProbe(False))
-    ).is_ready() is False
+    assert (
+        await CompositeReadinessProbe((StaticReadinessProbe(), StaticReadinessProbe())).is_ready()
+        is True
+    )
+    assert (
+        await CompositeReadinessProbe(
+            (StaticReadinessProbe(), StaticReadinessProbe(False))
+        ).is_ready()
+        is False
+    )
 
     class RaisingProbe:
         async def is_ready(self) -> bool:
             raise RuntimeError("probe failed")
 
-    assert await CompositeReadinessProbe(
-        (StaticReadinessProbe(), RaisingProbe())
-    ).is_ready() is False
+    assert (
+        await CompositeReadinessProbe((StaticReadinessProbe(), RaisingProbe())).is_ready() is False
+    )
 
 
 def test_composite_readiness_requires_at_least_one_probe() -> None:
