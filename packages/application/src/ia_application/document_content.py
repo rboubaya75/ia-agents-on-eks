@@ -37,9 +37,7 @@ class Utf8DocumentExtractor(TextExtractor):
             raise InvalidDocumentContentError("document source size is invalid")
         checksum = hashlib.sha256(payload).hexdigest()
         if checksum != document.source_checksum:
-            raise InvalidDocumentContentError(
-                "document source checksum does not match metadata"
-            )
+            raise InvalidDocumentContentError("document source checksum does not match metadata")
         try:
             text = payload.decode("utf-8", errors="strict")
         except UnicodeDecodeError as error:
