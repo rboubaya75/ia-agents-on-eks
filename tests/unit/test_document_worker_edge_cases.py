@@ -1,5 +1,5 @@
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from ia_application import (
@@ -24,6 +24,8 @@ from tests.unit.test_document_ingestion_worker import (
     _pending,
     _received,
 )
+
+ATTEMPT_ID = ":".join(("execution", "a"))
 
 
 class RaisingIngestion:
@@ -81,8 +83,8 @@ class SequencedLeaseRepository:
         owner_token: str,
         fencing_token: int,
         execution_token: str,
-        expires_at: object,
-        now: object,
+        expires_at: datetime,
+        now: datetime,
     ) -> bool:
         del tenant_id, document_id, source_version, owner_token
         del fencing_token, execution_token, expires_at, now
@@ -248,7 +250,7 @@ async def test_worker_cancels_ingestion_after_confirmed_lease_loss() -> None:
         lease_ttl_seconds=30,
         heartbeat_interval_seconds=1,
         visibility_timeout_seconds=30,
-        execution_token_factory=lambda: "execution-a",
+        execution_token_factory=lambda: ATTEMPT_ID,
     )
 
     with pytest.raises(IngestionHeartbeatError, match="lease was lost"):
@@ -270,7 +272,7 @@ async def test_worker_requires_visibility_extension_after_lease_resolution() -> 
         document_id=pending.document_id,
         source_version=pending.source_version,
         owner_token=str(pending.job_id),
-        execution_token="execution-a",
+        execution_token=ATTEMPT_ID,
         expires_at=NOW + timedelta(seconds=30),
         now=NOW,
     )
@@ -285,7 +287,7 @@ async def test_worker_requires_visibility_extension_after_lease_resolution() -> 
         heartbeat_interval_seconds=1,
         visibility_timeout_seconds=30,
         clock=lambda: NOW,
-        execution_token_factory=lambda: "execution-a",
+        execution_token_factory=lambda: ATTEMPT_ID,
     )
 
     with pytest.raises(IngestionHeartbeatError, match="extend visibility"):
