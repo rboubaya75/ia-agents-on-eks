@@ -191,8 +191,19 @@ class SqsIngestionTaskQueue(IngestionTaskQueue):
 
     @staticmethod
     def _document_group_id(task: IngestionTask) -> str:
+        tenant_id = str(task.tenant_id)
+        document_id = str(task.document_id)
+        raw_group = f"{tenant_id}:{document_id}"
+        safe_component_characters = frozenset("-_" )
+        safe_components = all(
+            value.isascii()
+            and all(character.isalnum() or character in safe_component_characters for character in value)
+            for value in (tenant_id, document_id)
+        )
+        if safe_components and len(raw_group) <= 128:
+            return raw_group
         material = json.dumps(
-            [str(task.tenant_id), str(task.document_id)],
+            [tenant_id, document_id],
             ensure_ascii=False,
             separators=(",", ":"),
         ).encode("utf-8")
