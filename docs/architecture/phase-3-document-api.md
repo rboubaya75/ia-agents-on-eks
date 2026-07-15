@@ -11,8 +11,7 @@ DocumentManagementService
     ├── DynamoDB document and PENDING job metadata
     ├── temporary S3 presigned upload
     ├── conditional promotion to immutable source
-    ├── SQS ingestion task
-    └── fenced source/chunk/vector deletion
+    └── SQS ingestion task
               ↓
 Document worker
     ↓ canonical job reload
@@ -24,7 +23,7 @@ DocumentIngestionService
     └── fenced S3 Vectors publication
 ```
 
-The API and worker are two entrypoints of the same immutable application image. The API does not execute extraction, Bedrock calls or vector publication.
+The API and ingestion worker are two entrypoints of the same immutable application image. The API does not execute extraction, Bedrock calls or vector publication.
 
 ## Endpoints
 
@@ -34,10 +33,11 @@ POST   /api/v1/documents/{documentId}/upload-url
 GET    /api/v1/documents/{documentId}
 POST   /api/v1/documents/{documentId}/ingestions
 GET    /api/v1/documents/{documentId}/ingestions/{jobId}
-DELETE /api/v1/documents/{documentId}
 ```
 
 The ingestion endpoint requires `Idempotency-Key` and returns `202 Accepted` with a canonical `PENDING` job. Request schemas forbid unknown fields, so client-supplied tenant, model alias and pipeline version values are rejected.
+
+Document deletion is intentionally not exposed in this increment. A durable deletion API requires a transactional request/outbox, a dedicated worker, renewable ownership and fenced tombstone completion; it will be delivered through a separate ADR and pull request.
 
 ## Source upload and promotion
 
@@ -56,11 +56,9 @@ server-side encryption headers
 expiration between 60 and 900 seconds
 ```
 
-Temporary keys are scoped by tenant, document and server-generated upload session. A mandatory one-day lifecycle rule covers the complete temporary prefix.
+Temporary keys are scoped by tenant, document and server-generated upload session. A mandatory one-day lifecycle rule covers the complete temporary prefix and removes abandoned uploads.
 
 When the client submits ingestion, the service holds the document-version lease, validates the temporary object with `HeadObject`, and copies it conditionally to the immutable source key using the observed ETag. The worker reads only the immutable source.
-
-A PUT executed after DELETE can therefore create only a temporary lifecycle-managed object, never the immutable source.
 
 ## Asynchronous submission
 
@@ -112,24 +110,6 @@ This increment supports:
 
 Strict UTF-8 decoding, line-ending normalization, content limits, checksum recomputation and control-character rejection are applied before chunking. PDF and DOCX are not silently treated as text.
 
-## Deletion semantics
-
-```text
-acquire the document-version lease
-    ↓
-optimistic transition to DELETING
-    ├── delete immutable source versions
-    ├── delete temporary upload sessions
-    ├── delete chunk generations
-    └── delete vector generations
-         ↓ all successful
-DELETED tombstone
-```
-
-A partial cleanup does not report success. The document remains `DELETING` for explicit retry. An ingestion failure restores state only when the current document is still `PROCESSING`, so an expired worker cannot overwrite deletion state.
-
-Control-plane job and generation records are retained for audit and hidden by the tombstone.
-
 ## Feature flag and configuration
 
 `IA_DOCUMENT_API_ENABLED` defaults to `false`. Existing Phase 2 installations therefore start without document-specific settings or AWS resources.
@@ -156,7 +136,7 @@ When the feature is enabled, readiness is fail-closed over:
 - chat-session DynamoDB;
 - document control DynamoDB;
 - document S3 bucket and temporary lifecycle rule;
-- SQS queue;
+- SQS ingestion queue;
 - S3 Vectors index;
 - local resolution of the configured embedding profile.
 
@@ -164,6 +144,7 @@ The readiness path never invokes an embedding model.
 
 ## Deferred
 
+- durable document deletion with transactional outbox, dedicated queue and worker, lease heartbeat and fenced completion;
 - Terraform, IAM and Helm resources required to enable the feature;
 - PDF and DOCX parser isolation;
 - frontend document-management screens;
