@@ -107,7 +107,7 @@ async def test_worker_logs_safe_iteration_failure(
         "create_document_runtime",
         lambda settings: _runtime(worker),
     )
-    monkeypatch.setattr(document_worker.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
     caplog.set_level(logging.ERROR, logger=document_worker.__name__)
 
     with pytest.raises(asyncio.CancelledError):
