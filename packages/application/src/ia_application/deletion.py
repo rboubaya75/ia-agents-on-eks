@@ -55,6 +55,15 @@ class DocumentDeletionTaskQueue(Protocol):
     async def is_ready(self) -> bool: ...
 
 
+@runtime_checkable
+class DocumentSourcePurger(Protocol):
+    async def delete_document(
+        self,
+        tenant_id: TenantId,
+        document_id: DocumentId,
+    ) -> None: ...
+
+
 class AsyncDocumentManagement(DocumentManagement):
     """Document management facade that dispatches destructive cleanup asynchronously."""
 
@@ -161,7 +170,7 @@ class DocumentPurgeService:
         *,
         documents: DocumentRepository,
         leases: DocumentIngestionLeaseRepository,
-        sources: object,
+        sources: DocumentSourcePurger,
         chunks: ChunkStore,
         vectors: VectorRepository,
         lease_ttl_seconds: int = 900,
@@ -170,9 +179,6 @@ class DocumentPurgeService:
         if lease_ttl_seconds < 30 or lease_ttl_seconds > 3600:
             msg = "deletion lease TTL must be between 30 and 3600 seconds"
             raise ValueError(msg)
-        if not hasattr(sources, "delete_document"):
-            msg = "document source store must support document deletion"
-            raise TypeError(msg)
         self._documents = documents
         self._leases = leases
         self._sources = sources
@@ -200,9 +206,8 @@ class DocumentPurgeService:
         if not claim.acquired:
             raise DocumentStateConflictError("document version is busy")
         try:
-            source_delete = getattr(self._sources, "delete_document")
             results = await asyncio.gather(
-                source_delete(document.tenant_id, document.document_id),
+                self._sources.delete_document(document.tenant_id, document.document_id),
                 self._chunks.delete_document(document.tenant_id, document.document_id),
                 self._vectors.delete_document(document.tenant_id, document.document_id),
                 return_exceptions=True,
