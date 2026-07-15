@@ -36,6 +36,7 @@ class InMemoryDocumentIngestionLeaseRepository:
         document_id: DocumentId,
         source_version: str,
         owner_token: str,
+        execution_token: str | None = None,
         expires_at: datetime,
         now: datetime,
     ) -> IngestionLeaseClaim:
@@ -50,6 +51,7 @@ class InMemoryDocumentIngestionLeaseRepository:
             document_id=document_id,
             source_version=source_version,
             owner_token=owner_token,
+            execution_token=execution_token or owner_token,
             fencing_token=fencing_token,
             expires_at=expires_at,
         )
@@ -63,12 +65,20 @@ class InMemoryDocumentIngestionLeaseRepository:
         document_id: DocumentId,
         source_version: str,
         owner_token: str,
+        fencing_token: int,
+        execution_token: str,
         expires_at: datetime,
         now: datetime,
     ) -> bool:
         key = (tenant_id, document_id, source_version)
         current = self._leases.get(key)
-        if current is None or current.owner_token != owner_token or current.expires_at <= now:
+        if (
+            current is None
+            or current.owner_token != owner_token
+            or current.fencing_token != fencing_token
+            or current.execution_token != execution_token
+            or current.expires_at <= now
+        ):
             return False
         self._leases[key] = current.model_copy(update={"expires_at": expires_at})
         return True
