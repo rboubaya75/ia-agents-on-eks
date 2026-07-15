@@ -16,6 +16,8 @@ from ia_domain import DocumentId, TenantId
 
 NOW = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
 LEASE_OWNER = ":".join(("worker", "a"))
+EXECUTION_TOKEN = "execution-a"
+FENCING_TOKEN = 7
 
 
 class LeaseControlTable:
@@ -84,7 +86,7 @@ class LeaseControlTable:
 
 
 @pytest.mark.asyncio
-async def test_renew_extends_only_current_unexpired_owner() -> None:
+async def test_renew_extends_only_exact_unexpired_claim() -> None:
     table = LeaseControlTable()
     repository = DynamoDocumentIngestionLeaseRepository(cast(DynamoControlTable, table))
 
@@ -93,6 +95,8 @@ async def test_renew_extends_only_current_unexpired_owner() -> None:
         document_id=DocumentId("document-a"),
         source_version="source-a",
         owner_token=LEASE_OWNER,
+        fencing_token=FENCING_TOKEN,
+        execution_token=EXECUTION_TOKEN,
         expires_at=NOW + timedelta(minutes=15),
         now=NOW,
     )
@@ -100,10 +104,15 @@ async def test_renew_extends_only_current_unexpired_owner() -> None:
     assert renewed is True
     assert table.last_update is not None
     assert table.last_update["update"] == "SET expiresAt = :expires"
-    assert table.last_update["condition"] == "ownerToken = :owner AND expiresAt > :now"
+    assert table.last_update["condition"] == (
+        "ownerToken = :owner AND fencingToken = :fencing AND "
+        "executionToken = :execution AND expiresAt > :now"
+    )
     values = table.last_update["values"]
     assert isinstance(values, dict)
     assert values[":owner"] == LEASE_OWNER
+    assert values[":fencing"] == FENCING_TOKEN
+    assert values[":execution"] == EXECUTION_TOKEN
 
 
 @pytest.mark.asyncio
@@ -117,11 +126,43 @@ async def test_renew_returns_false_after_lease_loss() -> None:
         document_id=DocumentId("document-a"),
         source_version="source-a",
         owner_token=LEASE_OWNER,
+        fencing_token=FENCING_TOKEN,
+        execution_token=EXECUTION_TOKEN,
         expires_at=NOW + timedelta(minutes=15),
         now=NOW,
     )
 
     assert renewed is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fencing_token", "execution_token", "expected_message"),
+    (
+        (0, EXECUTION_TOKEN, "fencing_token"),
+        (FENCING_TOKEN, "", "execution_token"),
+    ),
+)
+async def test_renew_rejects_invalid_claim_identity(
+    fencing_token: int,
+    execution_token: str,
+    expected_message: str,
+) -> None:
+    repository = DynamoDocumentIngestionLeaseRepository(
+        cast(DynamoControlTable, LeaseControlTable())
+    )
+
+    with pytest.raises(ValueError, match=expected_message):
+        await repository.renew(
+            tenant_id=TenantId("tenant-a"),
+            document_id=DocumentId("document-a"),
+            source_version="source-a",
+            owner_token=LEASE_OWNER,
+            fencing_token=fencing_token,
+            execution_token=execution_token,
+            expires_at=NOW + timedelta(minutes=15),
+            now=NOW,
+        )
 
 
 @pytest.mark.asyncio
@@ -136,6 +177,8 @@ async def test_renew_rejects_non_future_expiration() -> None:
             document_id=DocumentId("document-a"),
             source_version="source-a",
             owner_token=LEASE_OWNER,
+            fencing_token=FENCING_TOKEN,
+            execution_token=EXECUTION_TOKEN,
             expires_at=NOW,
             now=NOW,
         )
