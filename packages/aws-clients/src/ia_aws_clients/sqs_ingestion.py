@@ -198,8 +198,7 @@ class SqsIngestionTaskQueue(IngestionTaskQueue):
         safe_components = all(
             value.isascii()
             and all(
-                character.isalnum() or character in safe_component_characters
-                for character in value
+                character.isalnum() or character in safe_component_characters for character in value
             )
             for value in (tenant_id, document_id)
         )
