@@ -241,7 +241,7 @@ async def test_async_management_delegates_non_destructive_operations() -> None:
 
 @pytest.mark.asyncio
 async def test_deletion_worker_handles_empty_queue_and_missing_document() -> None:
-    synchronous, documents, _, leases, sources, _, chunks, vectors = _service()
+    _synchronous, documents, _, leases, sources, _, chunks, vectors = _service()
     queue = FakeDeletionQueue()
     purger = DocumentPurgeService(
         documents=documents,
