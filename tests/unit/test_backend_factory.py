@@ -4,7 +4,9 @@ from typing import cast
 import pytest
 from fastapi.testclient import TestClient
 from ia_aws_clients import Boto3DynamoTable
-from ia_backend_api.main import create_application
+from ia_backend_api import main as backend_main
+from ia_backend_api.settings import BackendSettings
+from pydantic import ValidationError
 
 
 class ReadyTable:
@@ -34,7 +36,7 @@ class ReadyTable:
         return True
 
 
-def test_environment_factory_wires_cognito_and_dynamodb(monkeypatch: pytest.MonkeyPatch) -> None:
+def _phase_two_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(
         "IA_COGNITO_ISSUER",
         "https://cognito-idp.eu-west-3.amazonaws.com/eu-west-3_example",
@@ -45,7 +47,14 @@ def test_environment_factory_wires_cognito_and_dynamodb(monkeypatch: pytest.Monk
     monkeypatch.setenv("IA_CHAT_SESSION_USER_INDEX", "tenant-user-index")
     monkeypatch.setenv("IA_CHAT_MESSAGE_TABLE", "messages")
     monkeypatch.setenv("IA_USAGE_RECORD_TABLE", "usage")
+
+
+def test_phase_two_environment_starts_with_documents_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _phase_two_environment(monkeypatch)
     table = ReadyTable()
+    observed: list[bool] = []
 
     def from_table_name(
         _cls: type[Boto3DynamoTable],
@@ -57,10 +66,44 @@ def test_environment_factory_wires_cognito_and_dynamodb(monkeypatch: pytest.Monk
         assert table_name == "sessions"
         return cast(Boto3DynamoTable, table)
 
+    def create_document_runtime(
+        settings: BackendSettings,
+    ) -> backend_main.DocumentRuntime | None:
+        observed.append(settings.document_api_enabled)
+        return None
+
     monkeypatch.setattr(Boto3DynamoTable, "from_table_name", classmethod(from_table_name))
+    monkeypatch.setattr(
+        backend_main,
+        "create_document_runtime",
+        create_document_runtime,
+    )
 
-    client = TestClient(create_application())
+    client = TestClient(backend_main.create_application())
 
-    response = client.get("/api/v1/health/ready")
-    assert response.status_code == 200
-    assert response.json()["status"] == "ready"
+    assert client.get("/api/v1/health/ready").status_code == 200
+    assert observed == [False]
+    assert client.get("/api/openapi.json").status_code == 200
+
+
+def test_enabling_documents_requires_complete_runtime_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _phase_two_environment(monkeypatch)
+    monkeypatch.setenv("IA_DOCUMENT_API_ENABLED", "true")
+
+    with pytest.raises(ValidationError, match="document_control_table"):
+        BackendSettings()
+
+
+def test_disabled_document_settings_remain_optional(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _phase_two_environment(monkeypatch)
+
+    settings = BackendSettings()
+
+    assert settings.document_api_enabled is False
+    assert settings.document_control_table is None
+    assert settings.document_bucket is None
+    assert settings.document_ingestion_queue_url is None

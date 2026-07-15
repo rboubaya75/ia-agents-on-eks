@@ -42,6 +42,31 @@ class DynamoIngestionJobRepository(IngestionJobRepository):
                 "stale ingestion job state update was rejected"
             ) from error
 
+    async def submit(self, job: IngestionJob) -> IngestionJobClaim:
+        if job.status is not IngestionStatus.PENDING:
+            msg = "submitted ingestion jobs must be pending"
+            raise ValueError(msg)
+        if job.fingerprint is not None or job.fencing_token is not None:
+            msg = "pending ingestion jobs cannot be fenced"
+            raise ValueError(msg)
+        try:
+            await self._table.put_item(
+                _job_item(job),
+                condition_expression="attribute_not_exists(jobId)",
+            )
+        except DynamoConditionFailedError:
+            existing = await self.get(job.tenant_id, job.job_id)
+            if (
+                existing is None
+                or existing.document_id != job.document_id
+                or existing.source_version != job.source_version
+            ):
+                raise RepositoryConflictError(
+                    "ingestion submission id conflicts with another job"
+                ) from None
+            return IngestionJobClaim(job=existing, acquired=False)
+        return IngestionJobClaim(job=job, acquired=True)
+
     async def claim(self, job: IngestionJob) -> IngestionJobClaim:
         if job.fingerprint is None or job.fencing_token is None:
             msg = "claimed ingestion jobs require a fingerprint and fencing token"
@@ -61,13 +86,19 @@ class DynamoIngestionJobRepository(IngestionJobRepository):
                     "Item": _job_item(job),
                     "ConditionExpression": (
                         "attribute_not_exists(jobId) OR "
+                        "(#status = :pending AND jobId = :job AND "
+                        "documentId = :document AND sourceVersion = :source) OR "
                         "(fingerprint = :fingerprint AND "
                         "(#status = :failed OR "
                         "(#status = :running AND fencingToken < :fencing)))"
                     ),
                     "ExpressionAttributeNames": {"#status": "status"},
                     "ExpressionAttributeValues": {
+                        ":job": str(job.job_id),
+                        ":document": str(job.document_id),
+                        ":source": job.source_version,
                         ":fingerprint": job.fingerprint,
+                        ":pending": IngestionStatus.PENDING.value,
                         ":failed": IngestionStatus.FAILED.value,
                         ":running": IngestionStatus.RUNNING.value,
                         ":fencing": job.fencing_token,

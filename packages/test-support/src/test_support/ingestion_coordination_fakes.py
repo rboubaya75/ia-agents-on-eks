@@ -28,6 +28,7 @@ class InMemoryDocumentIngestionLeaseRepository:
     def __init__(self) -> None:
         self._leases: dict[tuple[TenantId, DocumentId, str], IngestionLease] = {}
         self._fencing_tokens: dict[tuple[TenantId, DocumentId, str], int] = {}
+        self._execution_tokens: dict[tuple[TenantId, DocumentId, str], str] = {}
 
     async def acquire(
         self,
@@ -36,16 +37,14 @@ class InMemoryDocumentIngestionLeaseRepository:
         document_id: DocumentId,
         source_version: str,
         owner_token: str,
+        execution_token: str | None = None,
         expires_at: datetime,
         now: datetime,
     ) -> IngestionLeaseClaim:
         key = (tenant_id, document_id, source_version)
         current = self._leases.get(key)
         if current is not None and current.expires_at > now:
-            return IngestionLeaseClaim(
-                lease=current,
-                acquired=current.owner_token == owner_token,
-            )
+            return IngestionLeaseClaim(lease=current, acquired=False)
         fencing_token = self._fencing_tokens.get(key, 0) + 1
         self._fencing_tokens[key] = fencing_token
         lease = IngestionLease(
@@ -57,13 +56,44 @@ class InMemoryDocumentIngestionLeaseRepository:
             expires_at=expires_at,
         )
         self._leases[key] = lease
+        self._execution_tokens[key] = execution_token or owner_token
         return IngestionLeaseClaim(lease=lease, acquired=True)
+
+    async def renew(
+        self,
+        *,
+        tenant_id: TenantId,
+        document_id: DocumentId,
+        source_version: str,
+        owner_token: str,
+        fencing_token: int,
+        execution_token: str,
+        expires_at: datetime,
+        now: datetime,
+    ) -> bool:
+        key = (tenant_id, document_id, source_version)
+        current = self._leases.get(key)
+        if (
+            current is None
+            or current.owner_token != owner_token
+            or current.fencing_token != fencing_token
+            or self._execution_tokens.get(key) != execution_token
+            or current.expires_at <= now
+        ):
+            return False
+        self._leases[key] = current.model_copy(update={"expires_at": expires_at})
+        return True
 
     async def release(self, lease: IngestionLease) -> None:
         key = (lease.tenant_id, lease.document_id, lease.source_version)
         current = self._leases.get(key)
-        if current == lease:
+        if (
+            current is not None
+            and current.owner_token == lease.owner_token
+            and current.fencing_token == lease.fencing_token
+        ):
             del self._leases[key]
+            self._execution_tokens.pop(key, None)
 
 
 class InMemoryIngestionJobRepository:
@@ -84,10 +114,35 @@ class InMemoryIngestionJobRepository:
                     raise RepositoryConflictError("succeeded ingestion job cannot be overwritten")
         self._store(job)
 
+    async def submit(self, job: IngestionJob) -> IngestionJobClaim:
+        if job.status is not IngestionStatus.PENDING:
+            msg = "submitted ingestion jobs must be pending"
+            raise ValueError(msg)
+        existing = await self.get(job.tenant_id, job.job_id)
+        if existing is not None:
+            if (
+                existing.document_id != job.document_id
+                or existing.source_version != job.source_version
+            ):
+                raise RepositoryConflictError("ingestion submission id conflicts with another job")
+            return IngestionJobClaim(job=existing, acquired=False)
+        self._store(job)
+        return IngestionJobClaim(job=job, acquired=True)
+
     async def claim(self, job: IngestionJob) -> IngestionJobClaim:
         if job.fingerprint is None or job.fencing_token is None:
             msg = "claimed ingestion jobs require a fingerprint and fencing token"
             raise ValueError(msg)
+        current_by_id = await self.get(job.tenant_id, job.job_id)
+        if (
+            current_by_id is not None
+            and current_by_id.status is IngestionStatus.PENDING
+            and (
+                current_by_id.document_id != job.document_id
+                or current_by_id.source_version != job.source_version
+            )
+        ):
+            raise RepositoryConflictError("pending ingestion identity changed")
         existing = await self.find_by_fingerprint(job.tenant_id, job.fingerprint)
         if existing is not None and existing.status is IngestionStatus.SUCCEEDED:
             return IngestionJobClaim(job=existing, acquired=False)

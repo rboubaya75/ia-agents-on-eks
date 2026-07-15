@@ -25,6 +25,12 @@ from ia_aws_clients.dynamodb_documents import (
     DynamoIndexGenerationRepository,
     DynamoIngestionJobRepository,
 )
+from ia_aws_clients.readiness import (
+    DynamoControlReadinessProbe,
+    EmbeddingProfileReadinessProbe,
+    S3VectorIndexReadinessProbe,
+)
+from ia_aws_clients.s3_document_sources import S3DocumentSourceStore
 from ia_aws_clients.s3_documents import (
     S3ChunkStore,
     S3JsonStore,
@@ -37,6 +43,7 @@ from ia_aws_clients.s3_vectors import (
     S3VectorIndexSettings,
     S3VectorRepository,
 )
+from ia_aws_clients.sqs_ingestion import SqsIngestionTaskQueue
 
 __all__ = [
     "BedrockEmbeddingError",
@@ -46,6 +53,7 @@ __all__ = [
     "DynamoChatMessageRepository",
     "DynamoChatSessionRepository",
     "DynamoConditionFailedError",
+    "DynamoControlReadinessProbe",
     "DynamoControlTable",
     "DynamoDocumentIngestionLeaseRepository",
     "DynamoDocumentRepository",
@@ -55,14 +63,18 @@ __all__ = [
     "DynamoTable",
     "DynamoUsageRecordRepository",
     "DynamoUserProfileRepository",
+    "EmbeddingProfileReadinessProbe",
     "InvalidBedrockEmbeddingResponseError",
     "InvalidS3VectorResponseError",
     "S3ChunkStore",
+    "S3DocumentSourceStore",
     "S3JsonStore",
     "S3VectorError",
+    "S3VectorIndexReadinessProbe",
     "S3VectorIndexSettings",
     "S3VectorKeyManifestStore",
     "S3VectorRepository",
+    "SqsIngestionTaskQueue",
     "TitanEmbeddingProfileSettings",
     "UnknownEmbeddingProfileError",
     "VectorKeyManifestStore",

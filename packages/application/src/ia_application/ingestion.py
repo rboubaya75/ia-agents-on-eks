@@ -6,6 +6,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
+from uuid import uuid4
 
 from ia_domain import (
     Document,
@@ -82,6 +83,9 @@ class IngestDocumentCommand(BaseModel):
     pipeline_version: Annotated[str, Field(min_length=1, max_length=128)] = "ingestion-v1"
     embedding_batch_size: Annotated[int, Field(ge=1, le=256)] = 32
     lease_ttl_seconds: Annotated[int, Field(ge=30, le=3600)] = 300
+    execution_token: Annotated[str, Field(min_length=1, max_length=128)] = Field(
+        default_factory=lambda: uuid4().hex
+    )
 
 
 class DocumentIngestionService:
@@ -136,6 +140,7 @@ class DocumentIngestionService:
             document_id=document.document_id,
             source_version=document.source_version,
             owner_token=str(command.job_id),
+            execution_token=command.execution_token,
             expires_at=started_at + timedelta(seconds=command.lease_ttl_seconds),
             now=started_at,
         )
@@ -370,7 +375,11 @@ class DocumentIngestionService:
     ) -> None:
         with suppress(Exception):
             current = await self._documents.get(original.tenant_id, original.document_id)
-            if current is None or current.active_generation_id is not None:
+            if (
+                current is None
+                or current.status is not DocumentStatus.PROCESSING
+                or current.active_generation_id is not None
+            ):
                 return
             await self._documents.save(
                 current.model_copy(
