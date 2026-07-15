@@ -150,9 +150,11 @@ class SqsDocumentDeletionTaskQueue(DocumentDeletionTaskQueue):
         raw_receive_count = policy.get("maxReceiveCount")
         if not isinstance(dead_letter_arn, str) or not dead_letter_arn:
             return False
+        if isinstance(raw_receive_count, bool) or not isinstance(raw_receive_count, (str, int)):
+            return False
         try:
             max_receive_count = int(raw_receive_count)
-        except (TypeError, ValueError):
+        except ValueError:
             return False
         if max_receive_count < 1 or max_receive_count > 1_000:
             return False
