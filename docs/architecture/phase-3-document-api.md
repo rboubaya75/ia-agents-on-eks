@@ -37,7 +37,7 @@ GET    /api/v1/documents/{documentId}/ingestions/{jobId}
 
 The ingestion endpoint requires `Idempotency-Key` and returns `202 Accepted` with a canonical `PENDING` job. Request schemas forbid unknown fields, so client-supplied tenant, model alias and pipeline version values are rejected.
 
-Document deletion is intentionally not exposed in this increment. A durable deletion API requires a transactional request/outbox, a dedicated worker, renewable ownership and fenced tombstone completion; it will be delivered through a separate ADR and pull request.
+Document deletion is intentionally not exposed or implemented in this increment. A durable deletion API requires a transactional request/outbox, a dedicated worker, renewable ownership and fenced tombstone completion; it will be delivered through a separate ADR and pull request.
 
 ## Source upload and promotion
 
@@ -79,6 +79,8 @@ enqueue typed SQS task
 ```
 
 Embedding alias, embedding profile revision, resolved model ID and pipeline version are server configuration. They are not accepted from the client.
+
+For FIFO queues, the message group preserves the readable `tenant:document` form only when it is safe ASCII and at most 128 characters. Otherwise the adapter derives a deterministic 68-character ASCII identifier from SHA-256 over a non-ambiguous tenant/document encoding. This keeps one ordered group per document without allowing valid application identifiers to violate SQS constraints.
 
 The worker entrypoint is:
 
