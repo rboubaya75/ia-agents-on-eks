@@ -39,11 +39,24 @@ class BackendSettings(BaseSettings):
         min_length=1,
         max_length=2048,
     )
+    document_deletion_queue_url: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=2048,
+    )
     document_queue_visibility_timeout_seconds: Annotated[
         int,
         Field(ge=30, le=43_200),
     ] = 900
+    document_deletion_queue_visibility_timeout_seconds: Annotated[
+        int,
+        Field(ge=30, le=43_200),
+    ] = 900
     document_ingestion_lease_ttl_seconds: Annotated[
+        int,
+        Field(ge=30, le=3600),
+    ] = 900
+    document_deletion_lease_ttl_seconds: Annotated[
         int,
         Field(ge=30, le=3600),
     ] = 900
@@ -70,6 +83,7 @@ class BackendSettings(BaseSettings):
             "document_bucket": self.document_bucket,
             "document_upload_lifecycle_rule_id": self.document_upload_lifecycle_rule_id,
             "document_ingestion_queue_url": self.document_ingestion_queue_url,
+            "document_deletion_queue_url": self.document_deletion_queue_url,
             "vector_bucket_name": self.vector_bucket_name,
             "vector_index_name": self.vector_index_name,
             "embedding_profile_alias": self.embedding_profile_alias,
@@ -82,12 +96,21 @@ class BackendSettings(BaseSettings):
             raise ValueError(
                 "document API is enabled but required settings are missing: " + ", ".join(missing)
             )
+        if self.document_ingestion_queue_url == self.document_deletion_queue_url:
+            raise ValueError("document ingestion and deletion queues must be distinct")
         if (
             self.document_queue_visibility_timeout_seconds
             < self.document_ingestion_lease_ttl_seconds
         ):
             raise ValueError(
                 "document queue visibility timeout must be at least the ingestion lease TTL"
+            )
+        if (
+            self.document_deletion_queue_visibility_timeout_seconds
+            < self.document_deletion_lease_ttl_seconds
+        ):
+            raise ValueError(
+                "document deletion visibility timeout must be at least the deletion lease TTL"
             )
         if (
             self.document_ingestion_heartbeat_interval_seconds
