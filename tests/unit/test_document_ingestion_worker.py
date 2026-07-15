@@ -139,6 +139,7 @@ async def test_worker_executes_pending_job_with_server_owned_pipeline() -> None:
         queue=queue,
         ingestion=ingestion,
         clock=lambda: NOW,
+        execution_token_factory=lambda: "execution-a",
     )
 
     processed = await worker.run_once(wait_seconds=0)
@@ -152,6 +153,7 @@ async def test_worker_executes_pending_job_with_server_owned_pipeline() -> None:
             embedding_model_alias="server-profile",
             pipeline_version="pipeline-v1",
             lease_ttl_seconds=900,
+            execution_token="execution-a",
         )
     ]
     assert queue.acknowledged == [_received()]
@@ -232,7 +234,7 @@ async def test_worker_reexecutes_running_job_after_redelivery() -> None:
 
 
 @pytest.mark.asyncio
-async def test_transient_ingestion_failure_remains_unacknowledged_for_retry() -> None:
+async def test_transient_ingestion_failure_is_surfaced_and_unacknowledged() -> None:
     jobs = InMemoryIngestionJobRepository()
     await jobs.submit(_pending())
     queue = FakeQueue(_received())
@@ -243,10 +245,10 @@ async def test_transient_ingestion_failure_remains_unacknowledged_for_retry() ->
         clock=lambda: NOW,
     )
 
-    processed = await worker.run_once(wait_seconds=0)
+    with pytest.raises(IngestionFailedError, match="temporary AWS failure"):
+        await worker.run_once(wait_seconds=0)
 
     stored = await jobs.get(TenantId("tenant-a"), JobId("job-a"))
-    assert processed is False
     assert stored is not None
     assert stored.status is IngestionStatus.FAILED
     assert stored.error_code == "INGESTION_FAILED"
@@ -298,19 +300,28 @@ async def test_reused_canonical_result_preserves_generation_metadata() -> None:
 
 
 @pytest.mark.asyncio
-async def test_worker_renews_lease_and_extends_visibility_for_long_ingestion() -> None:
+async def test_worker_renews_exact_lease_and_extends_visibility() -> None:
     jobs = InMemoryIngestionJobRepository()
     pending = _pending()
-    await jobs.submit(pending)
     leases = InMemoryDocumentIngestionLeaseRepository()
-    await leases.acquire(
+    claim = await leases.acquire(
         tenant_id=pending.tenant_id,
         document_id=pending.document_id,
         source_version=pending.source_version,
         owner_token=str(pending.job_id),
-        expires_at=NOW + timedelta(seconds=30),
+        execution_token="execution-a",
+        expires_at=NOW + timedelta(seconds=5),
         now=NOW,
     )
+    running = pending.model_copy(
+        update={
+            "status": IngestionStatus.RUNNING,
+            "fingerprint": "f" * 64,
+            "generation_id": "generation-a",
+            "fencing_token": claim.lease.fencing_token,
+        }
+    )
+    await jobs.save(running)
     queue = FakeQueue(_received())
     ingestion = FakeIngestion()
     ingestion.sleep_seconds = 1.1
@@ -323,11 +334,25 @@ async def test_worker_renews_lease_and_extends_visibility_for_long_ingestion() -
         heartbeat_interval_seconds=1,
         visibility_timeout_seconds=30,
         clock=lambda: NOW,
+        execution_token_factory=lambda: "execution-a",
     )
 
     assert await worker.run_once(wait_seconds=0) is True
     assert queue.visibility_extensions == [30]
     assert queue.acknowledged == [_received()]
+    assert (
+        await leases.renew(
+            tenant_id=pending.tenant_id,
+            document_id=pending.document_id,
+            source_version=pending.source_version,
+            owner_token=str(pending.job_id),
+            fencing_token=claim.lease.fencing_token,
+            execution_token="execution-a",
+            expires_at=NOW + timedelta(seconds=60),
+            now=NOW + timedelta(seconds=10),
+        )
+        is True
+    )
 
 
 def test_worker_rejects_incoherent_heartbeat_timing() -> None:
