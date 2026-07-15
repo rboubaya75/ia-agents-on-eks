@@ -43,6 +43,7 @@ from ia_aws_clients.s3_vectors import (
     S3VectorIndexSettings,
     S3VectorRepository,
 )
+from ia_aws_clients.sqs_deletion import SqsDocumentDeletionTaskQueue
 from ia_aws_clients.sqs_ingestion import SqsIngestionTaskQueue
 
 __all__ = [
@@ -74,6 +75,7 @@ __all__ = [
     "S3VectorIndexSettings",
     "S3VectorKeyManifestStore",
     "S3VectorRepository",
+    "SqsDocumentDeletionTaskQueue",
     "SqsIngestionTaskQueue",
     "TitanEmbeddingProfileSettings",
     "UnknownEmbeddingProfileError",
