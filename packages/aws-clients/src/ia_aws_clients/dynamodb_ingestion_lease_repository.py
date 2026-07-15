@@ -42,10 +42,10 @@ class DynamoDocumentIngestionLeaseRepository(DocumentIngestionLeaseRepository):
         if current_item is not None:
             current = _decode_lease(current_item)
             if current.expires_at > now:
-                return IngestionLeaseClaim(
-                    lease=current,
-                    acquired=current.owner_token == owner_token,
-                )
+                # An active lease is never re-entrant, even for the same logical
+                # owner. Concurrent deliveries of one job must not share a lease
+                # instance because either caller could otherwise release it.
+                return IngestionLeaseClaim(lease=current, acquired=False)
         try:
             updated = await self._table.update_item(
                 key,
