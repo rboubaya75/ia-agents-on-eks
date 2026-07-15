@@ -31,12 +31,14 @@ class DynamoDocumentIngestionLeaseRepository(DocumentIngestionLeaseRepository):
         document_id: DocumentId,
         source_version: str,
         owner_token: str,
+        execution_token: str | None = None,
         expires_at: datetime,
         now: datetime,
     ) -> IngestionLeaseClaim:
         if expires_at <= now:
             msg = "lease expiration must be after now"
             raise ValueError(msg)
+        effective_execution_token = execution_token or owner_token
         key = _lease_key(tenant_id, document_id, source_version)
         current_item = await self._table.get_item(key)
         if current_item is not None:
@@ -51,7 +53,8 @@ class DynamoDocumentIngestionLeaseRepository(DocumentIngestionLeaseRepository):
                 key,
                 update_expression=(
                     "SET entityType = :entity, tenantId = :tenant, documentId = :document, "
-                    "sourceVersion = :source, ownerToken = :owner, expiresAt = :expires, "
+                    "sourceVersion = :source, ownerToken = :owner, "
+                    "executionToken = :execution, expiresAt = :expires, "
                     "fencingToken = if_not_exists(fencingToken, :zero) + :one"
                 ),
                 condition_expression="attribute_not_exists(expiresAt) OR expiresAt <= :now",
@@ -61,6 +64,7 @@ class DynamoDocumentIngestionLeaseRepository(DocumentIngestionLeaseRepository):
                     ":document": str(document_id),
                     ":source": source_version,
                     ":owner": owner_token,
+                    ":execution": effective_execution_token,
                     ":expires": _iso(expires_at),
                     ":now": _iso(now),
                     ":zero": 0,
@@ -81,19 +85,32 @@ class DynamoDocumentIngestionLeaseRepository(DocumentIngestionLeaseRepository):
         document_id: DocumentId,
         source_version: str,
         owner_token: str,
+        fencing_token: int,
+        execution_token: str,
         expires_at: datetime,
         now: datetime,
     ) -> bool:
         if expires_at <= now:
             msg = "lease expiration must be after now"
             raise ValueError(msg)
+        if fencing_token <= 0:
+            msg = "fencing_token must be positive"
+            raise ValueError(msg)
+        if not execution_token:
+            msg = "execution_token must not be empty"
+            raise ValueError(msg)
         try:
             await self._table.update_item(
                 _lease_key(tenant_id, document_id, source_version),
                 update_expression="SET expiresAt = :expires",
-                condition_expression="ownerToken = :owner AND expiresAt > :now",
+                condition_expression=(
+                    "ownerToken = :owner AND fencingToken = :fencing AND "
+                    "executionToken = :execution AND expiresAt > :now"
+                ),
                 expression_attribute_values={
                     ":owner": owner_token,
+                    ":fencing": fencing_token,
+                    ":execution": execution_token,
                     ":expires": _iso(expires_at),
                     ":now": _iso(now),
                 },
