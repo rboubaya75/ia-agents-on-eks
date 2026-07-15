@@ -12,9 +12,9 @@ DocumentManagementService
     ├── temporary S3 presigned upload
     ├── conditional promotion to immutable source
     ├── SQS ingestion task
-    └── fenced source/chunk/vector deletion
+    └── SQS deletion task after DELETING transition
               ↓
-Document worker
+Document ingestion worker
     ↓ canonical job reload
 DocumentIngestionService
     ├── UTF-8 TXT/Markdown extraction
@@ -22,9 +22,15 @@ DocumentIngestionService
     ├── Bedrock embeddings
     ├── S3 chunk storage
     └── fenced S3 Vectors publication
+
+Document deletion worker
+    ├── fenced source deletion
+    ├── chunk-generation deletion
+    ├── vector-generation deletion
+    └── DELETED tombstone
 ```
 
-The API and worker are two entrypoints of the same immutable application image. The API does not execute extraction, Bedrock calls or vector publication.
+The API, ingestion worker and deletion worker are entrypoints of the same immutable application image. The API does not execute extraction, Bedrock calls, vector publication or destructive storage cleanup.
 
 ## Endpoints
 
@@ -38,6 +44,8 @@ DELETE /api/v1/documents/{documentId}
 ```
 
 The ingestion endpoint requires `Idempotency-Key` and returns `202 Accepted` with a canonical `PENDING` job. Request schemas forbid unknown fields, so client-supplied tenant, model alias and pipeline version values are rejected.
+
+The deletion endpoint returns `202 Accepted` after the durable `DELETING` transition and queue dispatch. Its response reports `deleted=false` until the deletion worker persists the tombstone.
 
 ## Source upload and promotion
 
@@ -110,23 +118,39 @@ This increment supports:
 - `text/plain`;
 - `text/markdown`.
 
-Strict UTF-8 decoding, line-ending normalization, content limits, checksum recomputation and control-character rejection are applied before chunking. PDF and DOCX are not silently treated as text.
+Strict UTF-8 decoding, line-ending normalization, content limits, checksum recomputation and control-character rejection are applied before chunking. Deterministic content failures are terminal and acknowledged rather than retried as infrastructure failures. PDF and DOCX are not silently treated as text.
 
 ## Deletion semantics
 
 ```text
-acquire the document-version lease
+DELETE request
+    ↓
+authorize trusted tenant and document ACL
+    ↓
+acquire short document-version lease
     ↓
 optimistic transition to DELETING
+    ↓
+enqueue typed task on dedicated deletion queue
+    ↓
+202 Accepted
+
+Deletion worker
+    ↓ reload DELETING document
+acquire document-version lease
     ├── delete immutable source versions
     ├── delete temporary upload sessions
     ├── delete chunk generations
     └── delete vector generations
          ↓ all successful
 DELETED tombstone
+         ↓
+acknowledge SQS message
 ```
 
-A partial cleanup does not report success. The document remains `DELETING` for explicit retry. An ingestion failure restores state only when the current document is still `PROCESSING`, so an expired worker cannot overwrite deletion state.
+A partial cleanup does not acknowledge the task. The document remains `DELETING` and SQS retries the idempotent purge. An ingestion failure restores state only when the current document is still `PROCESSING`, so an expired worker cannot overwrite deletion state.
+
+The API role only needs document metadata and queue-send permissions. Destructive S3 and S3 Vectors permissions belong to the deletion worker role.
 
 Control-plane job and generation records are retained for audit and hidden by the tombstone.
 
@@ -139,7 +163,8 @@ When enabled, validation requires:
 - DynamoDB control table;
 - private document bucket;
 - temporary-upload lifecycle rule ID;
-- SQS ingestion queue URL and visibility timeout;
+- distinct SQS ingestion and deletion queue URLs;
+- ingestion and deletion visibility/lease timing;
 - source and index prefixes;
 - optional KMS key identifier;
 - maximum source size;
@@ -156,7 +181,9 @@ When the feature is enabled, readiness is fail-closed over:
 - chat-session DynamoDB;
 - document control DynamoDB;
 - document S3 bucket and temporary lifecycle rule;
-- SQS queue;
+- ingestion and deletion SQS queues;
+- queue DLQ/redrive configuration;
+- queue encryption and FIFO consistency;
 - S3 Vectors index;
 - local resolution of the configured embedding profile.
 
@@ -167,6 +194,6 @@ The readiness path never invokes an embedding model.
 - Terraform, IAM and Helm resources required to enable the feature;
 - PDF and DOCX parser isolation;
 - frontend document-management screens;
-- pending-job reconciliation and redispatch operations;
+- pending-job and pending-deletion reconciliation operations;
 - retrieval, citation rendering and custom agents;
 - audit-record retention and purge policy.
