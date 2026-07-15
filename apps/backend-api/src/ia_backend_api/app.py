@@ -506,6 +506,7 @@ def create_app(container: AppContainer) -> FastAPI:
     @app.delete(
         "/api/v1/documents/{document_id}",
         response_model=DeleteDocumentResponse,
+        status_code=status.HTTP_202_ACCEPTED,
         tags=["documents"],
     )
     async def delete_document(
@@ -519,7 +520,7 @@ def create_app(container: AppContainer) -> FastAPI:
         service = _document_service(dependencies)
         try:
             await _authorized_document(service, principal, document_id)
-            deleted = await service.delete_document(
+            deleting = await service.delete_document(
                 DeleteDocumentCommand(
                     tenant_id=principal.tenant_id,
                     document_id=DocumentId(document_id),
@@ -533,8 +534,9 @@ def create_app(container: AppContainer) -> FastAPI:
         return DeleteDocumentResponse(
             request_id=_request_id(request),
             trace_id=_trace_id(request),
-            document_id=str(deleted.document_id),
-            deleted=True,
+            document_id=str(deleting.document_id),
+            status=deleting.status.value,
+            deleted=False,
         )
 
     return app
