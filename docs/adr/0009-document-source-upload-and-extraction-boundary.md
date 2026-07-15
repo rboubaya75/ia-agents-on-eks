@@ -2,15 +2,15 @@
 
 - Status: Accepted
 - Date: 2026-07-13
-- Updated: 2026-07-14
+- Updated: 2026-07-15
 
 ## Context
 
 The versioned ingestion core and AWS storage adapters are merged, but authenticated users cannot yet register source documents, upload them or trigger ingestion through the platform API. Source files may contain sensitive tenant data and must not transit through application memory during upload or use client-controlled filenames as storage keys.
 
-A presigned URL pointing directly at the immutable source key creates a retention race: the client can execute the signed PUT after the document has been deleted and recreate an object that is no longer reachable by the application cleanup workflow.
+A presigned URL pointing directly at the immutable source key creates a future retention race: once durable deletion exists, a client could execute an already issued PUT after cleanup and recreate an object that is no longer reachable by the deletion workflow.
 
-The first API increment must remain small enough to validate the complete security boundary before introducing complex PDF and DOCX parsers.
+The first API increment must remain small enough to validate the complete security boundary before introducing complex PDF and DOCX parsers or a durable deletion workflow.
 
 ## Decision
 
@@ -54,7 +54,7 @@ The immutable source key is:
 <configured-prefix>/sources/{tenantId}/{documentId}/{sourceVersion}/original
 ```
 
-A PUT performed after document deletion can therefore recreate only a temporary object. It cannot recreate the immutable source and is removed by the lifecycle policy.
+A late PUT can therefore create only a temporary object. It cannot recreate an immutable source and is removed by the lifecycle policy. This storage boundary is intentionally established before the future durable deletion workflow is introduced.
 
 ### Trusted tenant and authorization context
 
@@ -82,21 +82,21 @@ Only `text/plain` and `text/markdown` are accepted in this increment. Extraction
 
 PDF and DOCX remain deferred until their parser isolation, archive limits and malicious-file controls are designed separately.
 
-### Deletion lifecycle
+### Deletion scope
 
-Deletion acquires the same document-version lease used by ingestion before transitioning to `DELETING`. It removes both immutable source and temporary upload prefixes, chunks and vectors. A partial failure leaves the recoverable `DELETING` state and returns an error. Successful cleanup writes the `DELETED` tombstone.
+Document deletion is not part of this increment. No public deletion endpoint, application command, management-port operation or synchronous cleanup workflow is delivered.
 
-An ingestion worker may restore a failed document only when the current status is still exactly `PROCESSING` and no active generation exists. It cannot overwrite `DELETING` after lease expiration or takeover.
+Durable deletion requires a separate ADR and implementation covering a transactional request/outbox, a dedicated encrypted queue and DLQ, renewable execution ownership, lease and visibility heartbeat, fenced tombstone completion, retries, reconciliation and audit-retention policy.
 
-Historical job and generation metadata is retained for audit and is no longer reachable through document APIs after the tombstone.
+The document states `DELETING` and `DELETED` remain reserved in the domain model so the future workflow can be introduced without redefining persisted status values. This reservation does not constitute an executable deletion capability.
 
 ## Consequences
 
 - API instances do not proxy source upload bytes.
-- Late presigned PUTs cannot recreate immutable sources after deletion.
+- Late presigned PUTs cannot create immutable source objects.
 - The deployment must configure and retain the one-day temporary-upload lifecycle rule before enabling the feature.
 - Bucket names, prefixes, KMS identifiers, size limits, model identifiers and vector indexes remain deployment configuration.
 - Source object validation is performed before queuing and again by the extractor over actual bytes.
 - Tenant isolation does not rely on request payload values or client filenames.
 - TXT and Markdown provide a controlled vertical slice before complex parser dependencies are accepted.
-- Purging retained control-plane audit records requires a later retention-policy increment.
+- Durable deletion and control-plane retention remain explicitly deferred to a separately reviewed increment.
