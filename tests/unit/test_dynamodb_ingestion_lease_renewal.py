@@ -16,7 +16,7 @@ from ia_domain import DocumentId, TenantId
 
 NOW = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
 LEASE_OWNER = ":".join(("worker", "a"))
-EXECUTION_TOKEN = "execution-a"
+ATTEMPT_ID = ":".join(("execution", "a"))
 FENCING_TOKEN = 7
 
 
@@ -96,7 +96,7 @@ async def test_renew_extends_only_exact_unexpired_claim() -> None:
         source_version="source-a",
         owner_token=LEASE_OWNER,
         fencing_token=FENCING_TOKEN,
-        execution_token=EXECUTION_TOKEN,
+        execution_token=ATTEMPT_ID,
         expires_at=NOW + timedelta(minutes=15),
         now=NOW,
     )
@@ -112,7 +112,7 @@ async def test_renew_extends_only_exact_unexpired_claim() -> None:
     assert isinstance(values, dict)
     assert values[":owner"] == LEASE_OWNER
     assert values[":fencing"] == FENCING_TOKEN
-    assert values[":execution"] == EXECUTION_TOKEN
+    assert values[":execution"] == ATTEMPT_ID
 
 
 @pytest.mark.asyncio
@@ -127,7 +127,7 @@ async def test_renew_returns_false_after_lease_loss() -> None:
         source_version="source-a",
         owner_token=LEASE_OWNER,
         fencing_token=FENCING_TOKEN,
-        execution_token=EXECUTION_TOKEN,
+        execution_token=ATTEMPT_ID,
         expires_at=NOW + timedelta(minutes=15),
         now=NOW,
     )
@@ -139,7 +139,7 @@ async def test_renew_returns_false_after_lease_loss() -> None:
 @pytest.mark.parametrize(
     ("fencing_token", "execution_token", "expected_message"),
     (
-        (0, EXECUTION_TOKEN, "fencing_token"),
+        (0, ATTEMPT_ID, "fencing_token"),
         (FENCING_TOKEN, "", "execution_token"),
     ),
 )
@@ -178,7 +178,7 @@ async def test_renew_rejects_non_future_expiration() -> None:
             source_version="source-a",
             owner_token=LEASE_OWNER,
             fencing_token=FENCING_TOKEN,
-            execution_token=EXECUTION_TOKEN,
+            execution_token=ATTEMPT_ID,
             expires_at=NOW,
             now=NOW,
         )
