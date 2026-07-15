@@ -200,8 +200,10 @@ async def test_readiness_requires_operational_queue_attributes() -> None:
 
     assert await queue.is_ready() is True
     _, kwargs = client.calls[-1]
-    assert "RedrivePolicy" in kwargs["AttributeNames"]
-    assert "SqsManagedSseEnabled" in kwargs["AttributeNames"]
+    attribute_names = kwargs["AttributeNames"]
+    assert isinstance(attribute_names, list)
+    assert "RedrivePolicy" in attribute_names
+    assert "SqsManagedSseEnabled" in attribute_names
 
     client.ready = False
     assert await queue.is_ready() is False
