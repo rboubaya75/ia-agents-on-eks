@@ -14,6 +14,10 @@ NOW = datetime(2026, 7, 15, 8, 0, tzinfo=UTC)
 LEASE_OWNER = ":".join(("worker", "a"))
 
 
+def _execution(value: str) -> str:
+    return "-".join(("execution", value))
+
+
 class ActiveLeaseTable:
     def __init__(self) -> None:
         self.update_called = False
@@ -30,7 +34,7 @@ class ActiveLeaseTable:
             "documentId": "document-a",
             "sourceVersion": "source-a",
             "ownerToken": LEASE_OWNER,
-            "executionToken": "execution-a",
+            "executionToken": _execution("a"),
             "fencingToken": 7,
             "expiresAt": (NOW + timedelta(minutes=5))
             .isoformat(timespec="microseconds")
@@ -53,7 +57,7 @@ async def test_dynamo_active_lease_is_not_reentrant_for_same_owner() -> None:
         document_id=DocumentId("document-a"),
         source_version="source-a",
         owner_token=LEASE_OWNER,
-        execution_token="execution-b",
+        execution_token=_execution("b"),
         expires_at=NOW + timedelta(minutes=10),
         now=NOW,
     )
@@ -72,7 +76,7 @@ async def test_in_memory_active_lease_is_not_reentrant_for_same_owner() -> None:
         document_id=DocumentId("document-a"),
         source_version="source-a",
         owner_token=LEASE_OWNER,
-        execution_token="execution-a",
+        execution_token=_execution("a"),
         expires_at=NOW + timedelta(minutes=5),
         now=NOW,
     )
@@ -81,7 +85,7 @@ async def test_in_memory_active_lease_is_not_reentrant_for_same_owner() -> None:
         document_id=DocumentId("document-a"),
         source_version="source-a",
         owner_token=LEASE_OWNER,
-        execution_token="execution-b",
+        execution_token=_execution("b"),
         expires_at=NOW + timedelta(minutes=10),
         now=NOW + timedelta(minutes=1),
     )
@@ -96,7 +100,7 @@ async def test_in_memory_active_lease_is_not_reentrant_for_same_owner() -> None:
             source_version="source-a",
             owner_token=LEASE_OWNER,
             fencing_token=first.lease.fencing_token,
-            execution_token="execution-a",
+            execution_token=_execution("a"),
             expires_at=NOW + timedelta(minutes=10),
             now=NOW + timedelta(minutes=1),
         )
@@ -112,7 +116,7 @@ async def test_stale_same_owner_claim_cannot_renew_replacement() -> None:
         document_id=DocumentId("document-a"),
         source_version="source-a",
         owner_token=LEASE_OWNER,
-        execution_token="execution-a",
+        execution_token=_execution("a"),
         expires_at=NOW + timedelta(minutes=1),
         now=NOW,
     )
@@ -121,7 +125,7 @@ async def test_stale_same_owner_claim_cannot_renew_replacement() -> None:
         document_id=DocumentId("document-a"),
         source_version="source-a",
         owner_token=LEASE_OWNER,
-        execution_token="execution-b",
+        execution_token=_execution("b"),
         expires_at=NOW + timedelta(minutes=10),
         now=NOW + timedelta(minutes=2),
     )
@@ -132,7 +136,7 @@ async def test_stale_same_owner_claim_cannot_renew_replacement() -> None:
         source_version="source-a",
         owner_token=LEASE_OWNER,
         fencing_token=first.lease.fencing_token,
-        execution_token="execution-a",
+        execution_token=_execution("a"),
         expires_at=NOW + timedelta(minutes=20),
         now=NOW + timedelta(minutes=3),
     )
@@ -142,7 +146,7 @@ async def test_stale_same_owner_claim_cannot_renew_replacement() -> None:
         source_version="source-a",
         owner_token=LEASE_OWNER,
         fencing_token=replacement.lease.fencing_token,
-        execution_token="execution-b",
+        execution_token=_execution("b"),
         expires_at=NOW + timedelta(minutes=20),
         now=NOW + timedelta(minutes=3),
     )
