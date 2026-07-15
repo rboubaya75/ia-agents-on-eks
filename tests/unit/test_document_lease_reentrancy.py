@@ -11,6 +11,7 @@ from ia_domain import DocumentId, TenantId
 from test_support import InMemoryDocumentIngestionLeaseRepository
 
 NOW = datetime(2026, 7, 15, 8, 0, tzinfo=UTC)
+LEASE_OWNER = ":".join(("worker", "a"))
 
 
 class ActiveLeaseTable:
@@ -28,7 +29,7 @@ class ActiveLeaseTable:
             "tenantId": "tenant-a",
             "documentId": "document-a",
             "sourceVersion": "source-a",
-            "ownerToken": "job-a",
+            "ownerToken": LEASE_OWNER,
             "fencingToken": 7,
             "expiresAt": (NOW + timedelta(minutes=5))
             .isoformat(timespec="microseconds")
@@ -50,13 +51,13 @@ async def test_dynamo_active_lease_is_not_reentrant_for_same_owner() -> None:
         tenant_id=TenantId("tenant-a"),
         document_id=DocumentId("document-a"),
         source_version="source-a",
-        owner_token="job-a",
+        owner_token=LEASE_OWNER,
         expires_at=NOW + timedelta(minutes=10),
         now=NOW,
     )
 
     assert claim.acquired is False
-    assert claim.lease.owner_token == "job-a"
+    assert claim.lease.owner_token == LEASE_OWNER
     assert claim.lease.fencing_token == 7
     assert table.update_called is False
 
@@ -68,7 +69,7 @@ async def test_in_memory_active_lease_is_not_reentrant_for_same_owner() -> None:
         tenant_id=TenantId("tenant-a"),
         document_id=DocumentId("document-a"),
         source_version="source-a",
-        owner_token="job-a",
+        owner_token=LEASE_OWNER,
         expires_at=NOW + timedelta(minutes=5),
         now=NOW,
     )
@@ -76,7 +77,7 @@ async def test_in_memory_active_lease_is_not_reentrant_for_same_owner() -> None:
         tenant_id=TenantId("tenant-a"),
         document_id=DocumentId("document-a"),
         source_version="source-a",
-        owner_token="job-a",
+        owner_token=LEASE_OWNER,
         expires_at=NOW + timedelta(minutes=10),
         now=NOW + timedelta(minutes=1),
     )
@@ -89,7 +90,7 @@ async def test_in_memory_active_lease_is_not_reentrant_for_same_owner() -> None:
             tenant_id=TenantId("tenant-a"),
             document_id=DocumentId("document-a"),
             source_version="source-a",
-            owner_token="job-a",
+            owner_token=LEASE_OWNER,
             expires_at=NOW + timedelta(minutes=10),
             now=NOW + timedelta(minutes=1),
         )
