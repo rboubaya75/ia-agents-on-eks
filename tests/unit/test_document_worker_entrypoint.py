@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import cast
 
 import pytest
@@ -30,6 +31,19 @@ class FakeWorker:
         raise asyncio.CancelledError
 
 
+class FailingThenCancelledWorker(FakeWorker):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    async def run_once(self, *, wait_seconds: int = 20) -> bool:
+        self.wait_seconds.append(wait_seconds)
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("sensitive provider detail")
+        raise asyncio.CancelledError
+
+
 class FakeSettings:
     document_ingestion_lease_ttl_seconds = 300
     document_ingestion_heartbeat_interval_seconds = 30
@@ -38,6 +52,13 @@ class FakeSettings:
 
 def _settings() -> BackendSettings:
     return cast(BackendSettings, FakeSettings())
+
+
+def _runtime(worker: FakeWorker) -> DocumentRuntime:
+    return cast(
+        DocumentRuntime,
+        type("Runtime", (), {"worker": worker})(),
+    )
 
 
 @pytest.mark.asyncio
@@ -56,15 +77,11 @@ async def test_worker_long_polls_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     worker = FakeWorker()
-    runtime = cast(
-        DocumentRuntime,
-        type("Runtime", (), {"worker": worker})(),
-    )
     monkeypatch.setattr(document_worker, "BackendSettings", _settings)
     monkeypatch.setattr(
         document_worker,
         "create_document_runtime",
-        lambda settings: runtime,
+        lambda settings: _runtime(worker),
     )
 
     with pytest.raises(asyncio.CancelledError):
@@ -72,3 +89,35 @@ async def test_worker_long_polls_runtime(
 
     assert worker.timing == (300, 30, 600)
     assert worker.wait_seconds == [20]
+
+
+@pytest.mark.asyncio
+async def test_worker_logs_safe_iteration_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    worker = FailingThenCancelledWorker()
+
+    async def no_sleep(seconds: float) -> None:
+        del seconds
+
+    monkeypatch.setattr(document_worker, "BackendSettings", _settings)
+    monkeypatch.setattr(
+        document_worker,
+        "create_document_runtime",
+        lambda settings: _runtime(worker),
+    )
+    monkeypatch.setattr(document_worker.asyncio, "sleep", no_sleep)
+    caplog.set_level(logging.ERROR, logger=document_worker.__name__)
+
+    with pytest.raises(asyncio.CancelledError):
+        await document_worker.run_worker()
+
+    failure_records = [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "document_worker_iteration_failed"
+    ]
+    assert len(failure_records) == 1
+    assert getattr(failure_records[0], "error_type", None) == "RuntimeError"
+    assert "sensitive provider detail" not in caplog.text
