@@ -2,11 +2,14 @@ from dataclasses import dataclass
 
 from fastapi import FastAPI
 from ia_application import (
+    AsyncDocumentManagement,
+    DocumentDeletionWorker,
     DocumentIngestionService,
     DocumentIngestionWorker,
     DocumentManagement,
     DocumentManagementService,
     DocumentPipelineSettings,
+    DocumentPurgeService,
     ParagraphChunker,
     Utf8DocumentExtractor,
 )
@@ -29,6 +32,7 @@ from ia_aws_clients import (
     S3VectorIndexSettings,
     S3VectorKeyManifestStore,
     S3VectorRepository,
+    SqsDocumentDeletionTaskQueue,
     SqsIngestionTaskQueue,
     TitanEmbeddingProfileSettings,
 )
@@ -60,6 +64,7 @@ class DynamoReadinessProbe(ReadinessProbe):
 class DocumentRuntime:
     management: DocumentManagement
     worker: DocumentIngestionWorker
+    deletion_worker: DocumentDeletionWorker
     readiness: ReadinessProbe
 
 
@@ -129,12 +134,22 @@ def create_document_runtime(settings: BackendSettings) -> DocumentRuntime | None
         ),
         region_name=settings.aws_region,
     )
-    queue = SqsIngestionTaskQueue.from_queue_url(
+    ingestion_queue = SqsIngestionTaskQueue.from_queue_url(
         _required(
             settings.document_ingestion_queue_url,
             "document_ingestion_queue_url",
         ),
         visibility_timeout_seconds=settings.document_queue_visibility_timeout_seconds,
+        region_name=settings.aws_region,
+    )
+    deletion_queue = SqsDocumentDeletionTaskQueue.from_queue_url(
+        _required(
+            settings.document_deletion_queue_url,
+            "document_deletion_queue_url",
+        ),
+        visibility_timeout_seconds=(
+            settings.document_deletion_queue_visibility_timeout_seconds
+        ),
         region_name=settings.aws_region,
     )
     ingestion = DocumentIngestionService(
@@ -152,12 +167,12 @@ def create_document_runtime(settings: BackendSettings) -> DocumentRuntime | None
         chunks=chunks,
         vectors=vectors,
     )
-    management = DocumentManagementService(
+    synchronous_management = DocumentManagementService(
         documents=documents,
         jobs=jobs,
         leases=leases,
         sources=sources,
-        queue=queue,
+        queue=ingestion_queue,
         chunks=chunks,
         vectors=vectors,
         pipeline=DocumentPipelineSettings(
@@ -166,19 +181,38 @@ def create_document_runtime(settings: BackendSettings) -> DocumentRuntime | None
                 settings.document_pipeline_version,
                 "document_pipeline_version",
             ),
+            deletion_lease_ttl_seconds=settings.document_deletion_lease_ttl_seconds,
         ),
         max_source_bytes=settings.document_max_source_bytes,
     )
+    management = AsyncDocumentManagement(
+        delegate=synchronous_management,
+        documents=documents,
+        leases=leases,
+        deletion_queue=deletion_queue,
+    )
     worker = DocumentIngestionWorker(
         jobs=jobs,
-        queue=queue,
+        queue=ingestion_queue,
         ingestion=ingestion,
+    )
+    deletion_worker = DocumentDeletionWorker(
+        queue=deletion_queue,
+        purger=DocumentPurgeService(
+            documents=documents,
+            leases=leases,
+            sources=sources,
+            chunks=chunks,
+            vectors=vectors,
+            lease_ttl_seconds=settings.document_deletion_lease_ttl_seconds,
+        ),
     )
     readiness = CompositeReadinessProbe(
         (
             DynamoControlReadinessProbe(control_table),
             sources,
-            queue,
+            ingestion_queue,
+            deletion_queue,
             S3VectorIndexReadinessProbe.from_settings(
                 vector_settings,
                 region_name=settings.aws_region,
@@ -192,6 +226,7 @@ def create_document_runtime(settings: BackendSettings) -> DocumentRuntime | None
     return DocumentRuntime(
         management=management,
         worker=worker,
+        deletion_worker=deletion_worker,
         readiness=readiness,
     )
 
