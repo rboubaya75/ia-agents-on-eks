@@ -3,14 +3,16 @@ from datetime import timedelta
 import pytest
 from ia_application import (
     AsyncDocumentManagement,
+    CreateSourceUploadCommand,
     DeleteDocumentCommand,
     DocumentDeletionError,
     DocumentDeletionTask,
     DocumentDeletionWorker,
     DocumentPurgeService,
     ReceivedDocumentDeletionTask,
+    StartDocumentIngestionCommand,
 )
-from ia_domain import DocumentId, DocumentStatus, TenantId
+from ia_domain import DocumentId, DocumentStatus, JobId, TenantId
 
 from tests.unit.test_document_management import NOW, _register, _service
 
@@ -193,3 +195,76 @@ async def test_cleanup_failure_is_retried_without_acknowledgement() -> None:
     assert queue.acknowledged == []
     stored = await documents.get(TenantId("tenant-a"), DocumentId("document-a"))
     assert stored is not None and stored.status is DocumentStatus.DELETING
+
+
+@pytest.mark.asyncio
+async def test_async_management_delegates_non_destructive_operations() -> None:
+    synchronous, documents, _, leases, _, _, _, _ = _service()
+    queue = FakeDeletionQueue()
+    management = AsyncDocumentManagement(
+        delegate=synchronous,
+        documents=documents,
+        leases=leases,
+        deletion_queue=queue,
+        clock=lambda: NOW,
+    )
+
+    registered = await management.register(_register())
+    fetched = await management.get_document(registered.tenant_id, registered.document_id)
+    upload = await management.create_upload(
+        CreateSourceUploadCommand(
+            tenant_id=registered.tenant_id,
+            document_id=registered.document_id,
+            upload_session_id="upload-a",
+            size_bytes=32,
+            expires_at=NOW + timedelta(minutes=5),
+        )
+    )
+    submitted = await management.submit_ingestion(
+        StartDocumentIngestionCommand(
+            tenant_id=registered.tenant_id,
+            document_id=registered.document_id,
+            job_id=JobId("job-a"),
+            upload_session_id="upload-a",
+        )
+    )
+    fetched_job = await management.get_job(
+        registered.tenant_id,
+        registered.document_id,
+        submitted.job_id,
+    )
+
+    assert fetched == registered
+    assert upload.upload_session_id == "upload-a"
+    assert fetched_job == submitted
+
+
+@pytest.mark.asyncio
+async def test_deletion_worker_handles_empty_queue_and_missing_document() -> None:
+    synchronous, documents, _, leases, sources, _, chunks, vectors = _service()
+    queue = FakeDeletionQueue()
+    purger = DocumentPurgeService(
+        documents=documents,
+        leases=leases,
+        sources=sources,
+        chunks=chunks,
+        vectors=vectors,
+        lease_ttl_seconds=300,
+        clock=lambda: NOW,
+    )
+    worker = DocumentDeletionWorker(queue=queue, purger=purger)
+
+    assert await worker.run_once(wait_seconds=0) is False
+
+    received = ReceivedDocumentDeletionTask(
+        receipt_handle="receipt-missing",
+        task=DocumentDeletionTask(
+            tenant_id=TenantId("tenant-a"),
+            document_id=DocumentId("missing-document"),
+            operation_id="delete-missing",
+        ),
+    )
+    queue.received = received
+
+    assert await worker.run_once(wait_seconds=0) is True
+    assert queue.acknowledged == [received]
