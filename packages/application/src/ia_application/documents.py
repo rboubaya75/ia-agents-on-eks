@@ -1,4 +1,3 @@
-import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Protocol, runtime_checkable
@@ -19,12 +18,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ia_application.ingestion import IngestDocumentCommand
 from ia_application.ports import (
-    ChunkStore,
     DocumentIngestionLeaseRepository,
     DocumentRepository,
     IngestionJobRepository,
     RepositoryConflictError,
-    VectorRepository,
 )
 
 _SUPPORTED_CONTENT_TYPES = frozenset({"text/plain", "text/markdown"})
@@ -50,10 +47,6 @@ class InvalidDocumentSourceError(DocumentManagementError):
     """Raised when an uploaded source does not match its registered metadata."""
 
 
-class DocumentDeletionError(DocumentManagementError):
-    """Raised when a document remains in DELETING after partial cleanup."""
-
-
 class IngestionDispatchError(DocumentManagementError):
     """Raised when a persisted ingestion job cannot be dispatched."""
 
@@ -66,7 +59,6 @@ class DocumentPipelineSettings(StrictModel):
     embedding_model_alias: Annotated[str, Field(min_length=1, max_length=128)]
     pipeline_version: Annotated[str, Field(min_length=1, max_length=128)]
     submission_lease_ttl_seconds: Annotated[int, Field(ge=30, le=300)] = 60
-    deletion_lease_ttl_seconds: Annotated[int, Field(ge=30, le=3600)] = 300
 
 
 class PresignedSourceUpload(StrictModel):
@@ -137,12 +129,6 @@ class StartDocumentIngestionCommand(StrictModel):
     upload_session_id: Annotated[str, Field(min_length=1, max_length=128)] | None = None
 
 
-class DeleteDocumentCommand(StrictModel):
-    tenant_id: Annotated[TenantId, Field(min_length=1, max_length=128)]
-    document_id: Annotated[DocumentId, Field(min_length=1, max_length=128)]
-    operation_id: Annotated[str, Field(min_length=1, max_length=128)]
-
-
 @runtime_checkable
 class DocumentSourceStore(Protocol):
     def source_uri(
@@ -170,12 +156,6 @@ class DocumentSourceStore(Protocol):
     async def inspect(self, document: Document) -> DocumentSourceMetadata: ...
 
     async def read(self, document: Document, *, max_bytes: int) -> bytes: ...
-
-    async def delete_document(
-        self,
-        tenant_id: TenantId,
-        document_id: DocumentId,
-    ) -> None: ...
 
     async def is_ready(self) -> bool: ...
 
@@ -210,8 +190,6 @@ class DocumentManagement(Protocol):
         self, tenant_id: TenantId, document_id: DocumentId, job_id: JobId
     ) -> IngestionJob: ...
 
-    async def delete_document(self, command: DeleteDocumentCommand) -> Document: ...
-
 
 class DocumentManagementService(DocumentManagement):
     def __init__(
@@ -222,8 +200,6 @@ class DocumentManagementService(DocumentManagement):
         leases: DocumentIngestionLeaseRepository,
         sources: DocumentSourceStore,
         queue: IngestionTaskQueue,
-        chunks: ChunkStore,
-        vectors: VectorRepository,
         pipeline: DocumentPipelineSettings,
         max_source_bytes: int,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -236,8 +212,6 @@ class DocumentManagementService(DocumentManagement):
         self._leases = leases
         self._sources = sources
         self._queue = queue
-        self._chunks = chunks
-        self._vectors = vectors
         self._pipeline = pipeline
         self._max_source_bytes = max_source_bytes
         self._clock = clock
@@ -390,64 +364,6 @@ class DocumentManagementService(DocumentManagement):
         if job is None or job.document_id != document_id:
             raise ManagedDocumentNotFoundError("ingestion job was not found")
         return job
-
-    async def delete_document(self, command: DeleteDocumentCommand) -> Document:
-        document = await self.get_document(command.tenant_id, command.document_id)
-        now = self._aware_now()
-        claim = await self._leases.acquire(
-            tenant_id=document.tenant_id,
-            document_id=document.document_id,
-            source_version=document.source_version,
-            owner_token=f"delete:{command.operation_id}",
-            expires_at=now + timedelta(seconds=self._pipeline.deletion_lease_ttl_seconds),
-            now=now,
-        )
-        if not claim.acquired:
-            raise DocumentStateConflictError("document version is busy")
-        try:
-            if document.status is DocumentStatus.DELETING:
-                deleting = document
-            else:
-                try:
-                    deleting = await self._documents.save(
-                        document.model_copy(
-                            update={
-                                "status": DocumentStatus.DELETING,
-                                "updated_at": self._aware_now(),
-                            }
-                        ),
-                        expected_revision=document.revision,
-                    )
-                except RepositoryConflictError as error:
-                    raise DocumentStateConflictError(
-                        "document changed before deletion started"
-                    ) from error
-            results = await asyncio.gather(
-                self._sources.delete_document(document.tenant_id, document.document_id),
-                self._chunks.delete_document(document.tenant_id, document.document_id),
-                self._vectors.delete_document(document.tenant_id, document.document_id),
-                return_exceptions=True,
-            )
-            if any(isinstance(result, BaseException) for result in results):
-                raise DocumentDeletionError(
-                    "document cleanup failed; the document remains in deleting state"
-                )
-            try:
-                return await self._documents.save(
-                    deleting.model_copy(
-                        update={
-                            "status": DocumentStatus.DELETED,
-                            "updated_at": self._aware_now(),
-                        }
-                    ),
-                    expected_revision=deleting.revision,
-                )
-            except RepositoryConflictError as error:
-                raise DocumentDeletionError(
-                    "document cleanup completed but tombstone persistence failed"
-                ) from error
-        finally:
-            await self._leases.release(claim.lease)
 
     async def _promote_or_inspect_source(
         self,
