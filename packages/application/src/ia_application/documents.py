@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Protocol, runtime_checkable
@@ -18,22 +17,13 @@ from ia_domain import (
 )
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ia_application.ingestion import (
-    DocumentNotFoundError,
-    DocumentNotReadyError,
-    IngestDocumentCommand,
-    IngestionError,
-    IngestionInProgressError,
-)
+from ia_application.ingestion import IngestDocumentCommand
 from ia_application.ports import (
     ChunkStore,
     DocumentIngestionLeaseRepository,
     DocumentRepository,
-    ExtractedDocument,
-    ExtractedSection,
     IngestionJobRepository,
     RepositoryConflictError,
-    TextExtractor,
     VectorRepository,
 )
 
@@ -221,48 +211,6 @@ class DocumentManagement(Protocol):
     ) -> IngestionJob: ...
 
     async def delete_document(self, command: DeleteDocumentCommand) -> Document: ...
-
-
-class Utf8DocumentExtractor(TextExtractor):
-    def __init__(self, sources: DocumentSourceStore, *, max_bytes: int) -> None:
-        if max_bytes <= 0:
-            msg = "max_bytes must be positive"
-            raise ValueError(msg)
-        self._sources = sources
-        self._max_bytes = max_bytes
-
-    async def extract(self, document: Document) -> ExtractedDocument:
-        if document.content_type not in _SUPPORTED_CONTENT_TYPES:
-            raise UnsupportedDocumentContentTypeError(
-                f"unsupported document content type: {document.content_type}"
-            )
-        payload = await self._sources.read(document, max_bytes=self._max_bytes)
-        if not payload or len(payload) > self._max_bytes:
-            raise InvalidDocumentSourceError("document source size is invalid")
-        checksum = hashlib.sha256(payload).hexdigest()
-        if checksum != document.source_checksum:
-            raise InvalidDocumentSourceError("document source checksum does not match metadata")
-        try:
-            text = payload.decode("utf-8", errors="strict")
-        except UnicodeDecodeError as error:
-            raise InvalidDocumentSourceError("document source is not valid UTF-8") from error
-        normalized = text.replace("\r\n", "\n").replace("\r", "\n")
-        if any(
-            (ord(character) < 32 and character not in {"\n", "\t", "\f"}) or ord(character) == 127
-            for character in normalized
-        ):
-            raise InvalidDocumentSourceError(
-                "document source contains unsupported control characters"
-            )
-        normalized = normalized.strip()
-        if not normalized:
-            raise InvalidDocumentSourceError("document source contains no indexable text")
-        return ExtractedDocument(
-            tenant_id=document.tenant_id,
-            document_id=document.document_id,
-            source_version=document.source_version,
-            sections=(ExtractedSection(title=document.title, content=normalized),),
-        )
 
 
 class DocumentManagementService(DocumentManagement):
@@ -527,100 +475,6 @@ class DocumentManagementService(DocumentManagement):
             raise InvalidDocumentSourceError("uploaded source exceeds the configured size limit")
         if metadata.checksum_sha256 != document.source_checksum:
             raise InvalidDocumentSourceError("uploaded checksum does not match metadata")
-
-    def _aware_now(self) -> datetime:
-        value = self._clock()
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError("clock must return a timezone-aware datetime")
-        return value
-
-
-class DocumentIngestionWorker:
-    def __init__(
-        self,
-        *,
-        jobs: IngestionJobRepository,
-        queue: IngestionTaskQueue,
-        ingestion: DocumentIngestion,
-        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
-    ) -> None:
-        self._jobs = jobs
-        self._queue = queue
-        self._ingestion = ingestion
-        self._clock = clock
-
-    async def run_once(self, *, wait_seconds: int = 20) -> bool:
-        received = await self._queue.receive(wait_seconds=wait_seconds)
-        if received is None:
-            return False
-        task = received.task
-        job = await self._jobs.get(task.tenant_id, task.job_id)
-        if job is None or job.document_id != task.document_id:
-            await self._queue.acknowledge(received)
-            return True
-        if job.status in {IngestionStatus.SUCCEEDED, IngestionStatus.FAILED}:
-            await self._queue.acknowledge(received)
-            return True
-        if job.status is not IngestionStatus.PENDING:
-            return False
-        if job.embedding_model_alias is None or job.pipeline_version is None:
-            await self._fail_pending(job, "INVALID_PENDING_JOB")
-            await self._queue.acknowledge(received)
-            return True
-        try:
-            result = await self._ingestion.ingest(
-                IngestDocumentCommand(
-                    tenant_id=job.tenant_id,
-                    document_id=job.document_id,
-                    job_id=job.job_id,
-                    embedding_model_alias=job.embedding_model_alias,
-                    pipeline_version=job.pipeline_version,
-                )
-            )
-        except IngestionInProgressError:
-            return False
-        except (DocumentNotFoundError, DocumentNotReadyError):
-            await self._fail_pending(job, "DOCUMENT_NOT_INGESTABLE")
-            await self._queue.acknowledge(received)
-            return True
-        except IngestionError:
-            current = await self._jobs.get(job.tenant_id, job.job_id)
-            if current is None or current.status is IngestionStatus.PENDING:
-                await self._fail_pending(job, "INGESTION_FAILED")
-            await self._queue.acknowledge(received)
-            return True
-        except Exception:
-            return False
-
-        if result.job_id != job.job_id:
-            await self._jobs.save(
-                job.model_copy(
-                    update={
-                        "status": result.status,
-                        "chunks_created": result.chunks_created,
-                        "vectors_created": result.vectors_created,
-                        "error_code": result.error_code,
-                        "embedding_profile_revision": result.embedding_profile_revision,
-                        "resolved_embedding_model_id": result.resolved_embedding_model_id,
-                        "embedding_dimensions": result.embedding_dimensions,
-                        "chunking_version": result.chunking_version,
-                        "completed_at": result.completed_at or self._aware_now(),
-                    }
-                )
-            )
-        await self._queue.acknowledge(received)
-        return True
-
-    async def _fail_pending(self, job: IngestionJob, error_code: str) -> None:
-        await self._jobs.save(
-            job.model_copy(
-                update={
-                    "status": IngestionStatus.FAILED,
-                    "error_code": error_code,
-                    "completed_at": self._aware_now(),
-                }
-            )
-        )
 
     def _aware_now(self) -> datetime:
         value = self._clock()
