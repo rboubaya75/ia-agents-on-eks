@@ -7,7 +7,7 @@ from tests.unit.test_document_management import _register, _service
 
 @pytest.mark.asyncio
 async def test_retry_with_same_upload_session_returns_canonical_pending_job() -> None:
-    service, _, _, _, sources, queue, _, _ = _service()
+    service, _, _, _, sources, queue = _service()
     await service.register(_register())
     command = StartDocumentIngestionCommand(
         tenant_id=TenantId("tenant-a"),
