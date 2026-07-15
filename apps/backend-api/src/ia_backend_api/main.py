@@ -158,8 +158,6 @@ def create_document_runtime(settings: BackendSettings) -> DocumentRuntime | None
         leases=leases,
         sources=sources,
         queue=queue,
-        chunks=chunks,
-        vectors=vectors,
         pipeline=DocumentPipelineSettings(
             embedding_model_alias=embedding_alias,
             pipeline_version=_required(
