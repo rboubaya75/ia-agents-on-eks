@@ -42,10 +42,7 @@ class InMemoryDocumentIngestionLeaseRepository:
         key = (tenant_id, document_id, source_version)
         current = self._leases.get(key)
         if current is not None and current.expires_at > now:
-            return IngestionLeaseClaim(
-                lease=current,
-                acquired=current.owner_token == owner_token,
-            )
+            return IngestionLeaseClaim(lease=current, acquired=False)
         fencing_token = self._fencing_tokens.get(key, 0) + 1
         self._fencing_tokens[key] = fencing_token
         lease = IngestionLease(
