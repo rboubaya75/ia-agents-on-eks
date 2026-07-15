@@ -92,6 +92,7 @@ class IngestionLease(StrictModel):
     document_id: Annotated[DocumentId, Field(min_length=1, max_length=128)]
     source_version: Annotated[str, Field(min_length=1, max_length=128)]
     owner_token: Annotated[str, Field(min_length=1, max_length=128)]
+    execution_token: Annotated[str, Field(min_length=1, max_length=128)] | None = None
     fencing_token: Annotated[int, Field(gt=0)]
     expires_at: datetime
 
@@ -255,6 +256,7 @@ class DocumentIngestionLeaseRepository(Protocol):
         document_id: DocumentId,
         source_version: str,
         owner_token: str,
+        execution_token: str | None = None,
         expires_at: datetime,
         now: datetime,
     ) -> IngestionLeaseClaim: ...
