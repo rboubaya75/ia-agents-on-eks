@@ -1,4 +1,5 @@
 from ia_application.chunking import ChunkingConfig, ParagraphChunker
+from ia_application.document_content import Utf8DocumentExtractor
 from ia_application.documents import (
     CreateSourceUploadCommand,
     DeleteDocumentCommand,
@@ -21,7 +22,6 @@ from ia_application.documents import (
     RegisterDocumentCommand,
     StartDocumentIngestionCommand,
     UnsupportedDocumentContentTypeError,
-    Utf8DocumentExtractor,
 )
 from ia_application.ingestion import (
     ConcurrentDocumentUpdateError,
