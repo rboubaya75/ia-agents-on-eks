@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Protocol, runtime_checkable
 from uuid import uuid4
 
 from ia_domain import DocumentId, IngestionJob, IngestionStatus, TenantId
@@ -27,7 +28,8 @@ class IngestionHeartbeatError(RuntimeError):
     """Raised when the worker can no longer extend its execution ownership."""
 
 
-class RenewableDocumentLeaseRepository:
+@runtime_checkable
+class RenewableDocumentLeaseRepository(Protocol):
     async def renew(
         self,
         *,
@@ -42,7 +44,8 @@ class RenewableDocumentLeaseRepository:
     ) -> bool: ...
 
 
-class VisibilityExtendingIngestionTaskQueue:
+@runtime_checkable
+class VisibilityExtendingIngestionTaskQueue(Protocol):
     async def extend_visibility(
         self,
         received: ReceivedIngestionTask,
