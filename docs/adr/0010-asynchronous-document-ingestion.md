@@ -71,9 +71,9 @@ The worker execution lease TTL, heartbeat interval and SQS visibility timeout ar
 heartbeat interval < lease TTL <= SQS visibility timeout
 ```
 
-While the service is establishing its lease and fenced `RUNNING` job claim, the heartbeat extends SQS visibility without pretending that lease ownership has already been confirmed. The startup wait is bounded by one lease TTL.
+The ingestion service must acquire its lease and persist the fenced `RUNNING` claim before the first heartbeat interval. This operation contains no source extraction, embedding or index publication. Failure to prove exact ownership on the first heartbeat is fail-closed rather than receiving a startup grace period.
 
-Once ownership is confirmed, the worker periodically:
+While ingestion runs, the worker periodically:
 
 1. reloads the authoritative `RUNNING` job and its fencing token;
 2. conditionally renews DynamoDB using owner, fencing and execution tokens;
@@ -124,6 +124,7 @@ No readiness probe invokes the embedding model.
 - Transient AWS failures are retried by SQS and produce a safe structured worker failure event.
 - Long-running ingestions keep both lease and visibility ownership alive.
 - Lease or visibility loss cancels ongoing extraction, embedding and storage work immediately.
+- A worker that cannot prove exact ownership by its first heartbeat is cancelled without acknowledgment.
 - Poison messages rely on the queue redrive policy and do not crash the worker process.
 - SQS, worker deployment, IAM, lifecycle and dead-letter configuration are required before the feature flag can be enabled.
 - At-least-once delivery is safe because job submission, fingerprint claim, leases and activation are idempotent or fenced.
