@@ -23,6 +23,14 @@ from ia_application.documents import (
     StartDocumentIngestionCommand,
     UnsupportedDocumentContentTypeError,
 )
+from ia_application.deletion import (
+    AsyncDocumentManagement,
+    DocumentDeletionTask,
+    DocumentDeletionTaskQueue,
+    DocumentDeletionWorker,
+    DocumentPurgeService,
+    ReceivedDocumentDeletionTask,
+)
 from ia_application.ingestion import (
     ConcurrentDocumentUpdateError,
     DocumentNotFoundError,
@@ -80,6 +88,7 @@ DocumentIngestionService = RecoverableDocumentIngestionService
 
 __all__ = [
     "AgentRuntimeClient",
+    "AsyncDocumentManagement",
     "ChatMessageRepository",
     "ChatSessionCommandRepository",
     "ChatSessionRepository",
@@ -90,6 +99,9 @@ __all__ = [
     "CreateSourceUploadCommand",
     "DeleteDocumentCommand",
     "DocumentDeletionError",
+    "DocumentDeletionTask",
+    "DocumentDeletionTaskQueue",
+    "DocumentDeletionWorker",
     "DocumentIngestion",
     "DocumentIngestionLeaseRepository",
     "DocumentIngestionService",
@@ -100,6 +112,7 @@ __all__ = [
     "DocumentNotFoundError",
     "DocumentNotReadyError",
     "DocumentPipelineSettings",
+    "DocumentPurgeService",
     "DocumentRepository",
     "DocumentSourceMetadata",
     "DocumentSourceStore",
@@ -133,6 +146,7 @@ __all__ = [
     "ModelResponse",
     "ParagraphChunker",
     "PresignedSourceUpload",
+    "ReceivedDocumentDeletionTask",
     "ReceivedIngestionTask",
     "RecoverableDocumentIngestionService",
     "RegisterDocumentCommand",
