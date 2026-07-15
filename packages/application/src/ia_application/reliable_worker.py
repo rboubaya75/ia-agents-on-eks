@@ -151,21 +151,20 @@ class DocumentIngestionWorker:
                 and current.error_code in _RETRYABLE_FAILURE_CODES
             ):
                 raise
-            if current is None or current.status in {
-                IngestionStatus.PENDING,
-                IngestionStatus.RUNNING,
-            }:
+            if current is None:
                 await self._fail_job(job, "INGESTION_FAILED")
+                raise
+            if current.status in {IngestionStatus.PENDING, IngestionStatus.RUNNING}:
+                await self._fail_job(current, "INGESTION_FAILED")
                 raise
             await self._queue.acknowledge(received)
             return True
         except IngestionError:
             current = await self._jobs.get(job.tenant_id, job.job_id)
-            if current is None or current.status in {
-                IngestionStatus.PENDING,
-                IngestionStatus.RUNNING,
-            }:
+            if current is None:
                 await self._fail_job(job, "INGESTION_FAILED")
+            elif current.status in {IngestionStatus.PENDING, IngestionStatus.RUNNING}:
+                await self._fail_job(current, "INGESTION_FAILED")
             await self._queue.acknowledge(received)
             return True
 
@@ -214,37 +213,28 @@ class DocumentIngestionWorker:
         if not isinstance(self._queue, VisibilityExtendingIngestionTaskQueue):
             raise IngestionHeartbeatError("ingestion queue cannot extend visibility")
 
-        ownership_confirmed = False
-        startup_wait_seconds = 0
         while True:
             current = await self._jobs.get(job.tenant_id, job.job_id)
-            if current is None:
-                raise IngestionHeartbeatError("ingestion job disappeared during execution")
+            if (
+                current is None
+                or current.status is not IngestionStatus.RUNNING
+                or current.fencing_token is None
+            ):
+                raise IngestionHeartbeatError("ingestion lease was not established")
 
-            renewed = False
-            if current.status is IngestionStatus.RUNNING and current.fencing_token is not None:
-                now = self._aware_now()
-                renewed = await leases.renew(
-                    tenant_id=job.tenant_id,
-                    document_id=job.document_id,
-                    source_version=job.source_version,
-                    owner_token=str(job.job_id),
-                    fencing_token=current.fencing_token,
-                    execution_token=command.execution_token,
-                    expires_at=now + timedelta(seconds=self._lease_ttl_seconds),
-                    now=now,
-                )
-            elif current.status is not IngestionStatus.PENDING:
-                raise IngestionHeartbeatError("ingestion execution is no longer running")
-
-            if renewed:
-                ownership_confirmed = True
-            elif ownership_confirmed:
+            now = self._aware_now()
+            renewed = await leases.renew(
+                tenant_id=job.tenant_id,
+                document_id=job.document_id,
+                source_version=job.source_version,
+                owner_token=str(job.job_id),
+                fencing_token=current.fencing_token,
+                execution_token=command.execution_token,
+                expires_at=now + timedelta(seconds=self._lease_ttl_seconds),
+                now=now,
+            )
+            if not renewed:
                 raise IngestionHeartbeatError("document ingestion lease was lost")
-            else:
-                startup_wait_seconds += self._heartbeat_interval_seconds
-                if startup_wait_seconds >= self._lease_ttl_seconds:
-                    raise IngestionHeartbeatError("document ingestion lease was not established")
 
             await self._queue.extend_visibility(
                 received,
