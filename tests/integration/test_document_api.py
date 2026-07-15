@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 from ia_application import (
     CreateSourceUploadCommand,
+    DeleteDocumentCommand,
     PresignedSourceUpload,
     RegisterDocumentCommand,
     StartDocumentIngestionCommand,
@@ -129,6 +130,10 @@ class StubDocuments:
         job = self.jobs[(tenant_id, job_id)]
         assert job.document_id == document_id
         return job
+
+    async def delete_document(self, command: DeleteDocumentCommand) -> Document:
+        del command
+        raise AssertionError("document deletion is intentionally deferred")
 
 
 def _principal(
