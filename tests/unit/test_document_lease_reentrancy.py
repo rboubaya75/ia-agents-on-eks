@@ -30,6 +30,7 @@ class ActiveLeaseTable:
             "documentId": "document-a",
             "sourceVersion": "source-a",
             "ownerToken": LEASE_OWNER,
+            "executionToken": "execution-a",
             "fencingToken": 7,
             "expiresAt": (NOW + timedelta(minutes=5))
             .isoformat(timespec="microseconds")
@@ -52,6 +53,7 @@ async def test_dynamo_active_lease_is_not_reentrant_for_same_owner() -> None:
         document_id=DocumentId("document-a"),
         source_version="source-a",
         owner_token=LEASE_OWNER,
+        execution_token="execution-b",
         expires_at=NOW + timedelta(minutes=10),
         now=NOW,
     )
@@ -70,6 +72,7 @@ async def test_in_memory_active_lease_is_not_reentrant_for_same_owner() -> None:
         document_id=DocumentId("document-a"),
         source_version="source-a",
         owner_token=LEASE_OWNER,
+        execution_token="execution-a",
         expires_at=NOW + timedelta(minutes=5),
         now=NOW,
     )
@@ -78,6 +81,7 @@ async def test_in_memory_active_lease_is_not_reentrant_for_same_owner() -> None:
         document_id=DocumentId("document-a"),
         source_version="source-a",
         owner_token=LEASE_OWNER,
+        execution_token="execution-b",
         expires_at=NOW + timedelta(minutes=10),
         now=NOW + timedelta(minutes=1),
     )
@@ -91,8 +95,59 @@ async def test_in_memory_active_lease_is_not_reentrant_for_same_owner() -> None:
             document_id=DocumentId("document-a"),
             source_version="source-a",
             owner_token=LEASE_OWNER,
+            fencing_token=first.lease.fencing_token,
+            execution_token="execution-a",
             expires_at=NOW + timedelta(minutes=10),
             now=NOW + timedelta(minutes=1),
         )
         is True
     )
+
+
+@pytest.mark.asyncio
+async def test_stale_same_owner_claim_cannot_renew_replacement() -> None:
+    repository = InMemoryDocumentIngestionLeaseRepository()
+    first = await repository.acquire(
+        tenant_id=TenantId("tenant-a"),
+        document_id=DocumentId("document-a"),
+        source_version="source-a",
+        owner_token=LEASE_OWNER,
+        execution_token="execution-a",
+        expires_at=NOW + timedelta(minutes=1),
+        now=NOW,
+    )
+    replacement = await repository.acquire(
+        tenant_id=TenantId("tenant-a"),
+        document_id=DocumentId("document-a"),
+        source_version="source-a",
+        owner_token=LEASE_OWNER,
+        execution_token="execution-b",
+        expires_at=NOW + timedelta(minutes=10),
+        now=NOW + timedelta(minutes=2),
+    )
+
+    stale_renewal = await repository.renew(
+        tenant_id=TenantId("tenant-a"),
+        document_id=DocumentId("document-a"),
+        source_version="source-a",
+        owner_token=LEASE_OWNER,
+        fencing_token=first.lease.fencing_token,
+        execution_token="execution-a",
+        expires_at=NOW + timedelta(minutes=20),
+        now=NOW + timedelta(minutes=3),
+    )
+    replacement_renewal = await repository.renew(
+        tenant_id=TenantId("tenant-a"),
+        document_id=DocumentId("document-a"),
+        source_version="source-a",
+        owner_token=LEASE_OWNER,
+        fencing_token=replacement.lease.fencing_token,
+        execution_token="execution-b",
+        expires_at=NOW + timedelta(minutes=20),
+        now=NOW + timedelta(minutes=3),
+    )
+
+    assert replacement.acquired is True
+    assert replacement.lease.fencing_token > first.lease.fencing_token
+    assert stale_renewal is False
+    assert replacement_renewal is True
