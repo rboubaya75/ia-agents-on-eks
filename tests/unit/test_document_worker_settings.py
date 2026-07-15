@@ -16,7 +16,8 @@ def _settings(**overrides: object) -> BackendSettings:
         "document_control_table": "documents",
         "document_bucket": "documents-bucket",
         "document_upload_lifecycle_rule_id": "temporary-uploads",
-        "document_ingestion_queue_url": "https://sqs.example/queue",
+        "document_ingestion_queue_url": "https://sqs.example/ingestion",
+        "document_deletion_queue_url": "https://sqs.example/deletion",
         "vector_bucket_name": "vectors",
         "vector_index_name": "documents",
         "embedding_profile_alias": "default",
@@ -34,6 +35,8 @@ def test_document_worker_timing_defaults_are_coherent() -> None:
     assert settings.document_ingestion_lease_ttl_seconds == 900
     assert settings.document_queue_visibility_timeout_seconds == 900
     assert settings.document_ingestion_heartbeat_interval_seconds == 60
+    assert settings.document_deletion_lease_ttl_seconds == 900
+    assert settings.document_deletion_queue_visibility_timeout_seconds == 900
 
 
 @pytest.mark.parametrize(
@@ -51,8 +54,15 @@ def test_document_worker_timing_defaults_are_coherent() -> None:
             "document_queue_visibility_timeout_seconds": 60,
             "document_ingestion_heartbeat_interval_seconds": 60,
         },
+        {
+            "document_deletion_lease_ttl_seconds": 901,
+            "document_deletion_queue_visibility_timeout_seconds": 900,
+        },
+        {
+            "document_deletion_queue_url": "https://sqs.example/ingestion",
+        },
     ),
 )
 def test_document_worker_rejects_incoherent_timing(overrides: dict[str, object]) -> None:
-    with pytest.raises(ValidationError, match=r"document ingestion|visibility timeout"):
+    with pytest.raises(ValidationError, match=r"document|visibility timeout|queues"):
         _settings(**overrides)
