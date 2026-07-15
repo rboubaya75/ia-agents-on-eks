@@ -234,4 +234,5 @@ class DeleteDocumentResponse(ApiModel):
     request_id: str
     trace_id: str
     document_id: str
+    status: str
     deleted: bool
