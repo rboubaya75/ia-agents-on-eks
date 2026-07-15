@@ -147,9 +147,7 @@ def create_document_runtime(settings: BackendSettings) -> DocumentRuntime | None
             settings.document_deletion_queue_url,
             "document_deletion_queue_url",
         ),
-        visibility_timeout_seconds=(
-            settings.document_deletion_queue_visibility_timeout_seconds
-        ),
+        visibility_timeout_seconds=(settings.document_deletion_queue_visibility_timeout_seconds),
         region_name=settings.aws_region,
     )
     ingestion = DocumentIngestionService(
