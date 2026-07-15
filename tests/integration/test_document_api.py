@@ -3,7 +3,6 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 from ia_application import (
     CreateSourceUploadCommand,
-    DeleteDocumentCommand,
     PresignedSourceUpload,
     RegisterDocumentCommand,
     StartDocumentIngestionCommand,
@@ -65,7 +64,6 @@ class StubDocuments:
         self.jobs: dict[tuple[TenantId, JobId], IngestionJob] = {}
         self.last_register: RegisterDocumentCommand | None = None
         self.last_submit: StartDocumentIngestionCommand | None = None
-        self.last_delete: DeleteDocumentCommand | None = None
 
     async def register(self, command: RegisterDocumentCommand) -> Document:
         self.last_register = command
@@ -132,13 +130,6 @@ class StubDocuments:
         assert job.document_id == document_id
         return job
 
-    async def delete_document(self, command: DeleteDocumentCommand) -> Document:
-        self.last_delete = command
-        current = self.documents[(command.tenant_id, command.document_id)]
-        deleted = current.model_copy(update={"status": DocumentStatus.DELETED, "updated_at": NOW})
-        self.documents[(command.tenant_id, command.document_id)] = deleted
-        return deleted
-
 
 def _principal(
     *,
@@ -167,7 +158,7 @@ def _client(
     maximum_classification: Classification = Classification.CONFIDENTIAL,
 ) -> tuple[TestClient, StubDocuments]:
     documents = StubDocuments()
-    identifiers = iter(("document-a", "upload-a", "delete-a"))
+    identifiers = iter(("document-a", "upload-a"))
     app = create_app(
         AppContainer(
             token_verifier=StaticTokenVerifier(
@@ -259,7 +250,6 @@ def test_document_api_lifecycle_derives_tenant_and_returns_202() -> None:
         f"/api/v1/documents/document-a/ingestions/{job_id}",
         headers=_headers(),
     )
-    deleted = client.delete("/api/v1/documents/document-a", headers=_headers())
 
     assert invalid.status_code == 422
     assert created.status_code == 201
@@ -272,9 +262,6 @@ def test_document_api_lifecycle_derives_tenant_and_returns_202() -> None:
     assert documents.last_submit is not None
     assert documents.last_submit.upload_session_id == "upload-a"
     assert job.status_code == 200
-    assert deleted.json()["deleted"] is True
-    assert documents.last_delete is not None
-    assert documents.last_delete.operation_id == "delete-a"
 
 
 def test_ingestion_requires_idempotency_key() -> None:
@@ -347,7 +334,7 @@ def test_document_classification_is_limited_at_creation() -> None:
     assert response.json()["error"]["code"] == "classification_forbidden"
 
 
-def test_all_existing_document_mutations_hide_above_clearance_document() -> None:
+def test_existing_document_mutations_hide_above_clearance_document() -> None:
     client, documents = _client(
         roles=frozenset({Role.TENANT_ADMIN}),
         maximum_classification=Classification.INTERNAL,
@@ -369,16 +356,11 @@ def test_all_existing_document_mutations_hide_above_clearance_document() -> None
             headers=_headers(idempotency_key="request-a"),
             json={},
         ),
-        client.delete(
-            "/api/v1/documents/document-a",
-            headers=_headers(),
-        ),
     )
 
     assert all(response.status_code == 404 for response in responses)
     assert all(response.json()["error"]["code"] == "document_not_found" for response in responses)
     assert documents.last_submit is None
-    assert documents.last_delete is None
 
 
 def test_ingestion_status_requires_document_read_access() -> None:
@@ -403,6 +385,19 @@ def test_ingestion_status_requires_document_read_access() -> None:
 
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "document_not_found"
+
+
+def test_document_delete_endpoint_is_deferred() -> None:
+    client, _ = _client(roles=frozenset({Role.TENANT_ADMIN}))
+
+    response = client.delete(
+        "/api/v1/documents/document-a",
+        headers=_headers(),
+    )
+    schema = client.get("/api/openapi.json").json()
+
+    assert response.status_code == 405
+    assert "delete" not in schema["paths"].get("/api/v1/documents/{document_id}", {})
 
 
 def test_openapi_hides_tenant_and_pipeline_configuration() -> None:
