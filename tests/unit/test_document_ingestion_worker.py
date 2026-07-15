@@ -23,6 +23,7 @@ from test_support import (
 )
 
 NOW = datetime(2026, 7, 14, 8, 0, tzinfo=UTC)
+ATTEMPT_ID = ":".join(("execution", "a"))
 
 
 class FakeQueue:
@@ -139,7 +140,7 @@ async def test_worker_executes_pending_job_with_server_owned_pipeline() -> None:
         queue=queue,
         ingestion=ingestion,
         clock=lambda: NOW,
-        execution_token_factory=lambda: "execution-a",
+        execution_token_factory=lambda: ATTEMPT_ID,
     )
 
     processed = await worker.run_once(wait_seconds=0)
@@ -153,7 +154,7 @@ async def test_worker_executes_pending_job_with_server_owned_pipeline() -> None:
             embedding_model_alias="server-profile",
             pipeline_version="pipeline-v1",
             lease_ttl_seconds=900,
-            execution_token="execution-a",
+            execution_token=ATTEMPT_ID,
         )
     ]
     assert queue.acknowledged == [_received()]
@@ -309,7 +310,7 @@ async def test_worker_renews_exact_lease_and_extends_visibility() -> None:
         document_id=pending.document_id,
         source_version=pending.source_version,
         owner_token=str(pending.job_id),
-        execution_token="execution-a",
+        execution_token=ATTEMPT_ID,
         expires_at=NOW + timedelta(seconds=5),
         now=NOW,
     )
@@ -334,7 +335,7 @@ async def test_worker_renews_exact_lease_and_extends_visibility() -> None:
         heartbeat_interval_seconds=1,
         visibility_timeout_seconds=30,
         clock=lambda: NOW,
-        execution_token_factory=lambda: "execution-a",
+        execution_token_factory=lambda: ATTEMPT_ID,
     )
 
     assert await worker.run_once(wait_seconds=0) is True
@@ -347,7 +348,7 @@ async def test_worker_renews_exact_lease_and_extends_visibility() -> None:
             source_version=pending.source_version,
             owner_token=str(pending.job_id),
             fencing_token=claim.lease.fencing_token,
-            execution_token="execution-a",
+            execution_token=ATTEMPT_ID,
             expires_at=NOW + timedelta(seconds=60),
             now=NOW + timedelta(seconds=10),
         )
