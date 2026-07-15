@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 from collections.abc import Mapping
 from typing import Protocol, cast
@@ -66,7 +67,7 @@ class SqsIngestionTaskQueue(IngestionTaskQueue):
         if self._queue_url.endswith(".fifo"):
             kwargs.update(
                 {
-                    "MessageGroupId": f"{task.tenant_id}:{task.document_id}",
+                    "MessageGroupId": self._document_group_id(task),
                     "MessageDeduplicationId": str(task.job_id),
                 }
             )
@@ -187,6 +188,15 @@ class SqsIngestionTaskQueue(IngestionTaskQueue):
         expected_fifo = self._queue_url.endswith(".fifo")
         actual_fifo = attributes.get("FifoQueue") == "true"
         return actual_fifo is expected_fifo
+
+    @staticmethod
+    def _document_group_id(task: IngestionTask) -> str:
+        material = json.dumps(
+            [str(task.tenant_id), str(task.document_id)],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return f"doc-{hashlib.sha256(material).hexdigest()}"
 
     @staticmethod
     def _validate_receive_count(message: Mapping[object, object]) -> None:
