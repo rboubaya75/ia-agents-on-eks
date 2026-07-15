@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-07-14
+- Updated: 2026-07-15
 
 ## Context
 
@@ -25,6 +26,8 @@ tenantId + documentId + Idempotency-Key
 
 Tenant identity comes only from the validated Cognito principal. Reusing the same key for the same document returns the canonical persisted job.
 
+Each worker delivery additionally generates a random server-owned `executionToken`. It is distinct from the canonical job ID and is never accepted from an HTTP or SQS payload. The token identifies one concrete worker attempt while the job ID remains stable across retries.
+
 ### Persist then enqueue
 
 The API acquires the document-version lease, promotes and validates the temporary upload when required, and conditionally persists an `IngestionJob` in `PENDING` state. It then sends a typed task containing only tenant, document and job identifiers to SQS and returns `202 Accepted`.
@@ -46,6 +49,16 @@ python -m ia_backend_api.document_worker
 
 The worker long-polls SQS, reloads the canonical job and may execute `PENDING`, recoverable `FAILED`, or redelivered `RUNNING` jobs. A `RUNNING` job is retried only through the existing document-version lease and fingerprint claim. After the previous lease expires, the replacement receives a higher fencing token; stale activation remains impossible.
 
+The lease stores three ownership dimensions:
+
+```text
+ownerToken     = canonical job ID
+fencingToken   = monotonically increasing takeover generation
+executionToken = unique worker attempt
+```
+
+An active lease is never re-entrant. Renewal succeeds only when all three ownership dimensions still match and the lease has not expired. A stale worker therefore cannot renew a replacement lease even when both attempts process the same canonical job ID.
+
 Terminal or missing jobs are acknowledged without re-execution. Validation and deterministic content failures are persisted and acknowledged. Unexpected infrastructure failures are persisted with the retryable code `INGESTION_FAILED`, left unacknowledged and may be reclaimed with a higher fencing token.
 
 When a successful fingerprint already exists under another job ID, the submitted job becomes a result alias and copies the canonical generation ID, counters, checksums and resolved embedding metadata. It never reports `SUCCEEDED` without a generation reference.
@@ -58,22 +71,25 @@ The worker execution lease TTL, heartbeat interval and SQS visibility timeout ar
 heartbeat interval < lease TTL <= SQS visibility timeout
 ```
 
-While ingestion runs, the worker periodically:
+While the service is establishing its lease and fenced `RUNNING` job claim, the heartbeat extends SQS visibility without pretending that lease ownership has already been confirmed. The startup wait is bounded by one lease TTL.
 
-1. conditionally renews the DynamoDB lease for the current owner;
-2. extends the SQS message visibility timeout.
+Once ownership is confirmed, the worker periodically:
 
-Loss of the lease or inability to extend visibility is fail-closed. The worker does not acknowledge the message, and activation remains protected by the fencing token and authoritative lease check.
+1. reloads the authoritative `RUNNING` job and its fencing token;
+2. conditionally renews DynamoDB using owner, fencing and execution tokens;
+3. extends the SQS message visibility timeout.
+
+Loss of the lease or inability to extend visibility is fail-closed. The ingestion coroutine is cancelled immediately, the message is not acknowledged, and activation remains protected by the fencing token and authoritative lease check.
 
 ### Poison messages
 
 SQS messages are schema-validated before entering the application worker. Invalid JSON, missing fields and unknown fields are not acknowledged and do not terminate the process. Their receipt and `ApproximateReceiveCount` remain controlled by SQS so the configured redrive policy can move them to the dead-letter queue.
 
-The outer worker loop isolates unexpected iteration errors while allowing `CancelledError` to stop the process cleanly.
+Retryable and unexpected processing exceptions escape `run_once()` after the message is left unacknowledged. The outer worker loop emits a stable structured failure event containing only the exception type, then continues. Provider messages, source content, prompts, tokens and AWS resource details are not logged. `CancelledError` still stops the process cleanly.
 
 ### Shared fencing with deletion
 
-Submission, ingestion and deletion use the same tenant/document/source-version lease. Deletion cannot start while an ingestion worker owns an unexpired lease. Activation remains protected by its fencing token and authoritative lease condition.
+Submission, ingestion and future durable deletion use the same tenant/document/source-version lease. Deletion cannot start while an ingestion worker owns an unexpired lease. Activation remains protected by its fencing token and authoritative lease condition.
 
 A failed worker restores document state only from `PROCESSING`; it never overwrites `DELETING` after lease expiry or takeover.
 
@@ -104,8 +120,10 @@ No readiness probe invokes the embedding model.
 - Bedrock cost cannot be multiplied by arbitrary client pipeline versions or model aliases.
 - The ingestion-status endpoint represents real asynchronous progress.
 - Worker crashes and expired leases are recoverable through higher fencing tokens.
-- Transient AWS failures are retried by SQS instead of being silently terminalized.
+- Same-job redelivery cannot renew or release a replacement execution lease.
+- Transient AWS failures are retried by SQS and produce a safe structured worker failure event.
 - Long-running ingestions keep both lease and visibility ownership alive.
+- Lease or visibility loss cancels ongoing extraction, embedding and storage work immediately.
 - Poison messages rely on the queue redrive policy and do not crash the worker process.
 - SQS, worker deployment, IAM, lifecycle and dead-letter configuration are required before the feature flag can be enabled.
 - At-least-once delivery is safe because job submission, fingerprint claim, leases and activation are idempotent or fenced.
