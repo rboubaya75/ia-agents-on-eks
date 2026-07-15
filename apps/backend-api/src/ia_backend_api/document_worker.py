@@ -22,9 +22,7 @@ async def run_worker() -> None:
         extra={
             "event": "document_worker_started",
             "lease_ttl_seconds": settings.document_ingestion_lease_ttl_seconds,
-            "heartbeat_interval_seconds": (
-                settings.document_ingestion_heartbeat_interval_seconds
-            ),
+            "heartbeat_interval_seconds": (settings.document_ingestion_heartbeat_interval_seconds),
             "visibility_timeout_seconds": settings.document_queue_visibility_timeout_seconds,
         },
     )
