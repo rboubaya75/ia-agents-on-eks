@@ -2,8 +2,6 @@ from ia_application.chunking import ChunkingConfig, ParagraphChunker
 from ia_application.document_content import Utf8DocumentExtractor
 from ia_application.documents import (
     CreateSourceUploadCommand,
-    DeleteDocumentCommand,
-    DocumentDeletionError,
     DocumentIngestion,
     DocumentManagement,
     DocumentManagementError,
@@ -88,8 +86,6 @@ __all__ = [
     "ChunkingStrategy",
     "ConcurrentDocumentUpdateError",
     "CreateSourceUploadCommand",
-    "DeleteDocumentCommand",
-    "DocumentDeletionError",
     "DocumentIngestion",
     "DocumentIngestionLeaseRepository",
     "DocumentIngestionService",
