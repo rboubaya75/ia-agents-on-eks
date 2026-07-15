@@ -1,8 +1,8 @@
 import asyncio
 from collections.abc import Callable
-from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import Protocol, runtime_checkable
+from uuid import uuid4
 
 from ia_domain import DocumentId, IngestionJob, IngestionStatus, TenantId
 
@@ -37,6 +37,8 @@ class RenewableDocumentLeaseRepository(Protocol):
         document_id: DocumentId,
         source_version: str,
         owner_token: str,
+        fencing_token: int,
+        execution_token: str,
         expires_at: datetime,
         now: datetime,
     ) -> bool: ...
@@ -64,12 +66,14 @@ class DocumentIngestionWorker:
         heartbeat_interval_seconds: int = 60,
         visibility_timeout_seconds: int = 900,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        execution_token_factory: Callable[[], str] = lambda: uuid4().hex,
     ) -> None:
         self._jobs = jobs
         self._queue = queue
         self._ingestion = ingestion
         self._leases = leases
         self._clock = clock
+        self._execution_token_factory = execution_token_factory
         self.configure_timing(
             lease_ttl_seconds=lease_ttl_seconds,
             heartbeat_interval_seconds=heartbeat_interval_seconds,
@@ -129,6 +133,7 @@ class DocumentIngestionWorker:
             embedding_model_alias=job.embedding_model_alias,
             pipeline_version=job.pipeline_version,
             lease_ttl_seconds=self._lease_ttl_seconds,
+            execution_token=self._execution_token_factory(),
         )
         try:
             result = await self._execute_with_heartbeat(received, job, command)
@@ -145,26 +150,23 @@ class DocumentIngestionWorker:
                 and current.status is IngestionStatus.FAILED
                 and current.error_code in _RETRYABLE_FAILURE_CODES
             ):
-                return False
-            if current is None or current.status in {
-                IngestionStatus.PENDING,
-                IngestionStatus.RUNNING,
-            }:
+                raise
+            if current is None:
                 await self._fail_job(job, "INGESTION_FAILED")
-                return False
+                raise
+            if current.status in {IngestionStatus.PENDING, IngestionStatus.RUNNING}:
+                await self._fail_job(current, "INGESTION_FAILED")
+                raise
             await self._queue.acknowledge(received)
             return True
         except IngestionError:
             current = await self._jobs.get(job.tenant_id, job.job_id)
-            if current is None or current.status in {
-                IngestionStatus.PENDING,
-                IngestionStatus.RUNNING,
-            }:
+            if current is None:
                 await self._fail_job(job, "INGESTION_FAILED")
+            elif current.status in {IngestionStatus.PENDING, IngestionStatus.RUNNING}:
+                await self._fail_job(current, "INGESTION_FAILED")
             await self._queue.acknowledge(received)
             return True
-        except Exception:
-            return False
 
         if result.job_id != job.job_id:
             await self._save_reused_result(job, result)
@@ -178,7 +180,7 @@ class DocumentIngestionWorker:
         command: IngestDocumentCommand,
     ) -> IngestionJob:
         ingestion_task = asyncio.create_task(self._ingestion.ingest(command))
-        heartbeat_task = asyncio.create_task(self._heartbeat(received, job))
+        heartbeat_task = asyncio.create_task(self._heartbeat(received, job, command))
         done, _ = await asyncio.wait(
             {ingestion_task, heartbeat_task},
             return_when=asyncio.FIRST_COMPLETED,
@@ -189,8 +191,8 @@ class DocumentIngestionWorker:
             return await ingestion_task
 
         heartbeat_error = heartbeat_task.exception()
-        with suppress(Exception):
-            await ingestion_task
+        ingestion_task.cancel()
+        await asyncio.gather(ingestion_task, return_exceptions=True)
         if heartbeat_error is not None:
             raise heartbeat_error
         raise IngestionHeartbeatError("ingestion heartbeat stopped unexpectedly")
@@ -199,6 +201,7 @@ class DocumentIngestionWorker:
         self,
         received: ReceivedIngestionTask,
         job: IngestionJob,
+        command: IngestDocumentCommand,
     ) -> None:
         await asyncio.sleep(self._heartbeat_interval_seconds)
         leases = self._leases
@@ -209,18 +212,30 @@ class DocumentIngestionWorker:
             leases = candidate
         if not isinstance(self._queue, VisibilityExtendingIngestionTaskQueue):
             raise IngestionHeartbeatError("ingestion queue cannot extend visibility")
+
         while True:
+            current = await self._jobs.get(job.tenant_id, job.job_id)
+            if (
+                current is None
+                or current.status is not IngestionStatus.RUNNING
+                or current.fencing_token is None
+            ):
+                raise IngestionHeartbeatError("ingestion lease was not established")
+
             now = self._aware_now()
             renewed = await leases.renew(
                 tenant_id=job.tenant_id,
                 document_id=job.document_id,
                 source_version=job.source_version,
                 owner_token=str(job.job_id),
+                fencing_token=current.fencing_token,
+                execution_token=command.execution_token,
                 expires_at=now + timedelta(seconds=self._lease_ttl_seconds),
                 now=now,
             )
             if not renewed:
                 raise IngestionHeartbeatError("document ingestion lease was lost")
+
             await self._queue.extend_visibility(
                 received,
                 timeout_seconds=self._visibility_timeout_seconds,

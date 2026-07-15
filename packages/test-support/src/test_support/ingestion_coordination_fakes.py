@@ -28,6 +28,7 @@ class InMemoryDocumentIngestionLeaseRepository:
     def __init__(self) -> None:
         self._leases: dict[tuple[TenantId, DocumentId, str], IngestionLease] = {}
         self._fencing_tokens: dict[tuple[TenantId, DocumentId, str], int] = {}
+        self._execution_tokens: dict[tuple[TenantId, DocumentId, str], str] = {}
 
     async def acquire(
         self,
@@ -36,16 +37,14 @@ class InMemoryDocumentIngestionLeaseRepository:
         document_id: DocumentId,
         source_version: str,
         owner_token: str,
+        execution_token: str | None = None,
         expires_at: datetime,
         now: datetime,
     ) -> IngestionLeaseClaim:
         key = (tenant_id, document_id, source_version)
         current = self._leases.get(key)
         if current is not None and current.expires_at > now:
-            return IngestionLeaseClaim(
-                lease=current,
-                acquired=current.owner_token == owner_token,
-            )
+            return IngestionLeaseClaim(lease=current, acquired=False)
         fencing_token = self._fencing_tokens.get(key, 0) + 1
         self._fencing_tokens[key] = fencing_token
         lease = IngestionLease(
@@ -57,6 +56,7 @@ class InMemoryDocumentIngestionLeaseRepository:
             expires_at=expires_at,
         )
         self._leases[key] = lease
+        self._execution_tokens[key] = execution_token or owner_token
         return IngestionLeaseClaim(lease=lease, acquired=True)
 
     async def renew(
@@ -66,12 +66,20 @@ class InMemoryDocumentIngestionLeaseRepository:
         document_id: DocumentId,
         source_version: str,
         owner_token: str,
+        fencing_token: int,
+        execution_token: str,
         expires_at: datetime,
         now: datetime,
     ) -> bool:
         key = (tenant_id, document_id, source_version)
         current = self._leases.get(key)
-        if current is None or current.owner_token != owner_token or current.expires_at <= now:
+        if (
+            current is None
+            or current.owner_token != owner_token
+            or current.fencing_token != fencing_token
+            or self._execution_tokens.get(key) != execution_token
+            or current.expires_at <= now
+        ):
             return False
         self._leases[key] = current.model_copy(update={"expires_at": expires_at})
         return True
@@ -79,8 +87,13 @@ class InMemoryDocumentIngestionLeaseRepository:
     async def release(self, lease: IngestionLease) -> None:
         key = (lease.tenant_id, lease.document_id, lease.source_version)
         current = self._leases.get(key)
-        if current == lease:
+        if (
+            current is not None
+            and current.owner_token == lease.owner_token
+            and current.fencing_token == lease.fencing_token
+        ):
             del self._leases[key]
+            self._execution_tokens.pop(key, None)
 
 
 class InMemoryIngestionJobRepository:

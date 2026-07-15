@@ -11,6 +11,10 @@ def _lease_owner(value: str) -> str:
     return value
 
 
+def _execution(value: str) -> str:
+    return "-".join(("execution", value))
+
+
 @pytest.mark.asyncio
 async def test_lease_is_unique_per_document_version_and_uses_fencing_tokens() -> None:
     repository = InMemoryDocumentIngestionLeaseRepository()
@@ -20,6 +24,7 @@ async def test_lease_is_unique_per_document_version_and_uses_fencing_tokens() ->
         document_id=DocumentId("document-a"),
         source_version="v1",
         owner_token=_lease_owner("job-a"),
+        execution_token=_execution("a"),
         expires_at=NOW + timedelta(minutes=5),
         now=NOW,
     )
@@ -28,6 +33,8 @@ async def test_lease_is_unique_per_document_version_and_uses_fencing_tokens() ->
         document_id=DocumentId("document-a"),
         source_version="v1",
         owner_token=_lease_owner("job-a"),
+        fencing_token=first.lease.fencing_token,
+        execution_token=_execution("a"),
         expires_at=NOW + timedelta(minutes=10),
         now=NOW + timedelta(minutes=1),
     )
@@ -36,6 +43,7 @@ async def test_lease_is_unique_per_document_version_and_uses_fencing_tokens() ->
         document_id=DocumentId("document-a"),
         source_version="v1",
         owner_token=_lease_owner("job-b"),
+        execution_token=_execution("b"),
         expires_at=NOW + timedelta(minutes=5),
         now=NOW + timedelta(minutes=6),
     )
@@ -44,6 +52,7 @@ async def test_lease_is_unique_per_document_version_and_uses_fencing_tokens() ->
         document_id=DocumentId("document-a"),
         source_version="v1",
         owner_token=_lease_owner("job-b"),
+        execution_token=_execution("b"),
         expires_at=NOW + timedelta(minutes=20),
         now=NOW + timedelta(minutes=11),
     )
@@ -56,13 +65,14 @@ async def test_lease_is_unique_per_document_version_and_uses_fencing_tokens() ->
 
 
 @pytest.mark.asyncio
-async def test_lease_renewal_rejects_wrong_owner_or_expired_lease() -> None:
+async def test_lease_renewal_rejects_wrong_claim_or_expired_lease() -> None:
     repository = InMemoryDocumentIngestionLeaseRepository()
-    await repository.acquire(
+    claim = await repository.acquire(
         tenant_id=TenantId("tenant-a"),
         document_id=DocumentId("document-a"),
         source_version="v1",
         owner_token=_lease_owner("job-a"),
+        execution_token=_execution("a"),
         expires_at=NOW + timedelta(minutes=5),
         now=NOW,
     )
@@ -72,6 +82,28 @@ async def test_lease_renewal_rejects_wrong_owner_or_expired_lease() -> None:
         document_id=DocumentId("document-a"),
         source_version="v1",
         owner_token=_lease_owner("job-b"),
+        fencing_token=claim.lease.fencing_token,
+        execution_token=_execution("a"),
+        expires_at=NOW + timedelta(minutes=10),
+        now=NOW + timedelta(minutes=1),
+    )
+    wrong_fencing = await repository.renew(
+        tenant_id=TenantId("tenant-a"),
+        document_id=DocumentId("document-a"),
+        source_version="v1",
+        owner_token=_lease_owner("job-a"),
+        fencing_token=claim.lease.fencing_token + 1,
+        execution_token=_execution("a"),
+        expires_at=NOW + timedelta(minutes=10),
+        now=NOW + timedelta(minutes=1),
+    )
+    wrong_execution = await repository.renew(
+        tenant_id=TenantId("tenant-a"),
+        document_id=DocumentId("document-a"),
+        source_version="v1",
+        owner_token=_lease_owner("job-a"),
+        fencing_token=claim.lease.fencing_token,
+        execution_token=_execution("b"),
         expires_at=NOW + timedelta(minutes=10),
         now=NOW + timedelta(minutes=1),
     )
@@ -80,9 +112,13 @@ async def test_lease_renewal_rejects_wrong_owner_or_expired_lease() -> None:
         document_id=DocumentId("document-a"),
         source_version="v1",
         owner_token=_lease_owner("job-a"),
+        fencing_token=claim.lease.fencing_token,
+        execution_token=_execution("a"),
         expires_at=NOW + timedelta(minutes=12),
         now=NOW + timedelta(minutes=6),
     )
 
     assert wrong_owner is False
+    assert wrong_fencing is False
+    assert wrong_execution is False
     assert expired is False

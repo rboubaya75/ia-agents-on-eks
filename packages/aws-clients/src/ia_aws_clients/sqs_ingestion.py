@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections.abc import Mapping
 from typing import Protocol, cast
 
@@ -137,16 +138,55 @@ class SqsIngestionTaskQueue(IngestionTaskQueue):
             response = await asyncio.to_thread(
                 self._client.get_queue_attributes,
                 QueueUrl=self._queue_url,
-                AttributeNames=["QueueArn"],
+                AttributeNames=[
+                    "QueueArn",
+                    "RedrivePolicy",
+                    "KmsMasterKeyId",
+                    "SqsManagedSseEnabled",
+                    "FifoQueue",
+                ],
             )
         except Exception:
             return False
         attributes = response.get("Attributes")
-        return (
-            isinstance(attributes, Mapping)
-            and isinstance(attributes.get("QueueArn"), str)
-            and bool(attributes.get("QueueArn"))
-        )
+        return isinstance(attributes, Mapping) and self._operational_attributes_ready(attributes)
+
+    def _operational_attributes_ready(self, attributes: Mapping[object, object]) -> bool:
+        queue_arn = attributes.get("QueueArn")
+        if not isinstance(queue_arn, str) or not queue_arn:
+            return False
+
+        redrive_policy = attributes.get("RedrivePolicy")
+        if not isinstance(redrive_policy, str) or not redrive_policy:
+            return False
+        try:
+            policy = json.loads(redrive_policy)
+        except (TypeError, ValueError):
+            return False
+        if not isinstance(policy, Mapping):
+            return False
+        dead_letter_arn = policy.get("deadLetterTargetArn")
+        raw_receive_count = policy.get("maxReceiveCount")
+        if not isinstance(dead_letter_arn, str) or not dead_letter_arn:
+            return False
+        if isinstance(raw_receive_count, bool) or not isinstance(raw_receive_count, (str, int)):
+            return False
+        try:
+            max_receive_count = int(raw_receive_count)
+        except ValueError:
+            return False
+        if max_receive_count < 1 or max_receive_count > 1_000:
+            return False
+
+        kms_key_id = attributes.get("KmsMasterKeyId")
+        managed_sse = attributes.get("SqsManagedSseEnabled")
+        encrypted = (isinstance(kms_key_id, str) and bool(kms_key_id)) or managed_sse == "true"
+        if not encrypted:
+            return False
+
+        expected_fifo = self._queue_url.endswith(".fifo")
+        actual_fifo = attributes.get("FifoQueue") == "true"
+        return actual_fifo is expected_fifo
 
     @staticmethod
     def _validate_receive_count(message: Mapping[object, object]) -> None:

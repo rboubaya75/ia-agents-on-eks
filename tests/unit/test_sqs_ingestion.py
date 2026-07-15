@@ -1,3 +1,4 @@
+import json
 from collections.abc import Mapping
 from typing import cast
 
@@ -12,6 +13,17 @@ class RecordingSqsClient:
         self.calls: list[tuple[str, dict[str, object]]] = []
         self.messages: list[dict[str, object]] = []
         self.ready = True
+        self.attributes: dict[str, str] = {
+            "QueueArn": "arn:aws:sqs:region:account:queue",
+            "RedrivePolicy": json.dumps(
+                {
+                    "deadLetterTargetArn": "arn:aws:sqs:region:account:queue-dlq",
+                    "maxReceiveCount": "5",
+                }
+            ),
+            "SqsManagedSseEnabled": "true",
+            "FifoQueue": "false",
+        }
 
     def send_message(self, **kwargs: object) -> dict[str, object]:
         self.calls.append(("send", kwargs))
@@ -33,7 +45,7 @@ class RecordingSqsClient:
         self.calls.append(("attributes", kwargs))
         if not self.ready:
             raise RuntimeError("queue unavailable")
-        return {"Attributes": {"QueueArn": "arn:aws:sqs:region:account:queue"}}
+        return {"Attributes": self.attributes}
 
 
 def _task() -> IngestionTask:
@@ -182,14 +194,42 @@ async def test_extend_visibility_rejects_invalid_timeout() -> None:
 
 
 @pytest.mark.asyncio
-async def test_readiness_requires_queue_arn() -> None:
+async def test_readiness_requires_operational_queue_attributes() -> None:
     client = RecordingSqsClient()
     queue = _queue(client)
 
     assert await queue.is_ready() is True
+    _, kwargs = client.calls[-1]
+    attribute_names = kwargs["AttributeNames"]
+    assert isinstance(attribute_names, list)
+    assert "RedrivePolicy" in attribute_names
+    assert "SqsManagedSseEnabled" in attribute_names
 
     client.ready = False
     assert await queue.is_ready() is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "missing_attribute",
+    ("RedrivePolicy", "SqsManagedSseEnabled"),
+)
+async def test_readiness_rejects_missing_dlq_or_encryption(missing_attribute: str) -> None:
+    client = RecordingSqsClient()
+    client.attributes.pop(missing_attribute)
+
+    assert await _queue(client).is_ready() is False
+
+
+@pytest.mark.asyncio
+async def test_fifo_readiness_requires_fifo_queue_attribute() -> None:
+    client = RecordingSqsClient()
+    fifo_queue = _queue(client, queue_url="https://sqs.example/queue.fifo")
+
+    assert await fifo_queue.is_ready() is False
+
+    client.attributes["FifoQueue"] = "true"
+    assert await fifo_queue.is_ready() is True
 
 
 @pytest.mark.parametrize(
