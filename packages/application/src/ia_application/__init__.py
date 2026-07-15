@@ -1,4 +1,12 @@
 from ia_application.chunking import ChunkingConfig, ParagraphChunker
+from ia_application.deletion import (
+    AsyncDocumentManagement,
+    DocumentDeletionTask,
+    DocumentDeletionTaskQueue,
+    DocumentDeletionWorker,
+    DocumentPurgeService,
+    ReceivedDocumentDeletionTask,
+)
 from ia_application.document_content import Utf8DocumentExtractor
 from ia_application.documents import (
     CreateSourceUploadCommand,
@@ -22,14 +30,6 @@ from ia_application.documents import (
     RegisterDocumentCommand,
     StartDocumentIngestionCommand,
     UnsupportedDocumentContentTypeError,
-)
-from ia_application.deletion import (
-    AsyncDocumentManagement,
-    DocumentDeletionTask,
-    DocumentDeletionTaskQueue,
-    DocumentDeletionWorker,
-    DocumentPurgeService,
-    ReceivedDocumentDeletionTask,
 )
 from ia_application.ingestion import (
     ConcurrentDocumentUpdateError,
