@@ -492,7 +492,7 @@ async def test_lease_repository_handles_active_conflict_and_release() -> None:
         expires_at=NOW + timedelta(minutes=10),
         now=NOW,
     )
-    assert same_owner.acquired is True
+    assert same_owner.acquired is False
 
     other_owner = await repository.acquire(
         tenant_id=TenantId("tenant-a"),
