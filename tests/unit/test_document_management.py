@@ -1,16 +1,12 @@
 import hashlib
-from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from ia_application import (
     CreateSourceUploadCommand,
-    DeleteDocumentCommand,
-    DocumentDeletionError,
     DocumentManagementService,
     DocumentPipelineSettings,
     DocumentSourceMetadata,
-    DocumentStateConflictError,
     IngestionTask,
     InvalidDocumentSourceError,
     PresignedSourceUpload,
@@ -18,15 +14,10 @@ from ia_application import (
     RegisterDocumentCommand,
     StartDocumentIngestionCommand,
     Utf8DocumentExtractor,
-    VectorMatch,
-    VectorQuery,
-    VectorRecord,
 )
 from ia_domain import (
-    ChunkId,
     Classification,
     Document,
-    DocumentChunk,
     DocumentId,
     DocumentStatus,
     IngestionStatus,
@@ -54,8 +45,6 @@ class FakeSourceStore:
             size_bytes=len(PAYLOAD),
             checksum_sha256=CHECKSUM,
         )
-        self.deleted = False
-        self.fail_delete = False
         self.uploaded_document: Document | None = None
         self.promoted_session_id: str | None = None
 
@@ -100,16 +89,6 @@ class FakeSourceStore:
         del document
         return self.payload[: max_bytes + 1]
 
-    async def delete_document(
-        self,
-        tenant_id: TenantId,
-        document_id: DocumentId,
-    ) -> None:
-        del tenant_id, document_id
-        if self.fail_delete:
-            raise RuntimeError("source delete failed")
-        self.deleted = True
-
     async def is_ready(self) -> bool:
         return True
 
@@ -134,59 +113,6 @@ class FakeQueue:
         return True
 
 
-class FakeChunkStore:
-    def __init__(self) -> None:
-        self.deleted = False
-
-    async def put_batch(self, chunks: Sequence[DocumentChunk]) -> None:
-        del chunks
-
-    async def get(
-        self,
-        tenant_id: TenantId,
-        generation_id: str,
-        chunk_id: ChunkId,
-    ) -> DocumentChunk | None:
-        del tenant_id, generation_id, chunk_id
-        return None
-
-    async def delete_document(self, tenant_id: TenantId, document_id: DocumentId) -> None:
-        del tenant_id, document_id
-        self.deleted = True
-
-    async def delete_generation(
-        self,
-        tenant_id: TenantId,
-        document_id: DocumentId,
-        generation_id: str,
-    ) -> None:
-        del tenant_id, document_id, generation_id
-
-
-class FakeVectorRepository:
-    def __init__(self) -> None:
-        self.deleted = False
-
-    async def upsert(self, records: Sequence[VectorRecord]) -> None:
-        del records
-
-    async def delete_document(self, tenant_id: TenantId, document_id: DocumentId) -> None:
-        del tenant_id, document_id
-        self.deleted = True
-
-    async def delete_generation(
-        self,
-        tenant_id: TenantId,
-        document_id: DocumentId,
-        generation_id: str,
-    ) -> None:
-        del tenant_id, document_id, generation_id
-
-    async def query(self, query: VectorQuery) -> tuple[VectorMatch, ...]:
-        del query
-        return ()
-
-
 def _service() -> tuple[
     DocumentManagementService,
     InMemoryDocumentRepository,
@@ -194,24 +120,18 @@ def _service() -> tuple[
     InMemoryDocumentIngestionLeaseRepository,
     FakeSourceStore,
     FakeQueue,
-    FakeChunkStore,
-    FakeVectorRepository,
 ]:
     documents = InMemoryDocumentRepository()
     jobs = InMemoryIngestionJobRepository()
     leases = InMemoryDocumentIngestionLeaseRepository()
     sources = FakeSourceStore()
     queue = FakeQueue()
-    chunks = FakeChunkStore()
-    vectors = FakeVectorRepository()
     service = DocumentManagementService(
         documents=documents,
         jobs=jobs,
         leases=leases,
         sources=sources,
         queue=queue,
-        chunks=chunks,
-        vectors=vectors,
         pipeline=DocumentPipelineSettings(
             embedding_model_alias="server-profile",
             pipeline_version="pipeline-v1",
@@ -219,7 +139,7 @@ def _service() -> tuple[
         max_source_bytes=1_000,
         clock=lambda: NOW,
     )
-    return service, documents, jobs, leases, sources, queue, chunks, vectors
+    return service, documents, jobs, leases, sources, queue
 
 
 def _register() -> RegisterDocumentCommand:
@@ -238,7 +158,7 @@ def _register() -> RegisterDocumentCommand:
 
 @pytest.mark.asyncio
 async def test_document_registration_upload_and_submission_lifecycle() -> None:
-    service, documents, jobs, _, sources, queue, _, _ = _service()
+    service, documents, jobs, _, sources, queue = _service()
     registered = await service.register(_register())
     upload = await service.create_upload(
         CreateSourceUploadCommand(
@@ -278,7 +198,7 @@ async def test_document_registration_upload_and_submission_lifecycle() -> None:
 
 @pytest.mark.asyncio
 async def test_submission_is_idempotent_for_same_job_id() -> None:
-    service, _, _, _, _, queue, _, _ = _service()
+    service, _, _, _, _, queue = _service()
     await service.register(_register())
     command = StartDocumentIngestionCommand(
         tenant_id=TenantId("tenant-a"),
@@ -296,7 +216,7 @@ async def test_submission_is_idempotent_for_same_job_id() -> None:
 
 @pytest.mark.asyncio
 async def test_submission_rejects_mismatched_promoted_source_metadata() -> None:
-    service, _, _, _, sources, queue, _, _ = _service()
+    service, _, _, _, sources, queue = _service()
     await service.register(_register())
     sources.metadata = sources.metadata.model_copy(update={"checksum_sha256": "0" * 64})
 
@@ -315,7 +235,7 @@ async def test_submission_rejects_mismatched_promoted_source_metadata() -> None:
 
 @pytest.mark.asyncio
 async def test_utf8_extractor_normalizes_text_and_rejects_binary_content() -> None:
-    _, _, _, _, sources, _, _, _ = _service()
+    _, _, _, _, sources, _ = _service()
     document = Document(
         tenant_id=TenantId("tenant-a"),
         document_id=DocumentId("document-a"),
@@ -343,56 +263,3 @@ async def test_utf8_extractor_normalizes_text_and_rejects_binary_content() -> No
     )
     with pytest.raises(InvalidDocumentSourceError, match="control"):
         await extractor.extract(invalid)
-
-
-@pytest.mark.asyncio
-async def test_delete_is_rejected_while_ingestion_lease_is_held() -> None:
-    service, documents, _, leases, _, _, _, _ = _service()
-    registered = await service.register(_register())
-    lease_owner = ":".join(("worker", str(JobId("job-a"))))
-    await leases.acquire(
-        tenant_id=registered.tenant_id,
-        document_id=registered.document_id,
-        source_version=registered.source_version,
-        owner_token=lease_owner,
-        expires_at=NOW + timedelta(minutes=5),
-        now=NOW,
-    )
-
-    with pytest.raises(DocumentStateConflictError, match="busy"):
-        await service.delete_document(
-            DeleteDocumentCommand(
-                tenant_id=TenantId("tenant-a"),
-                document_id=DocumentId("document-a"),
-                operation_id="delete-a",
-            )
-        )
-
-    stored = await documents.get(TenantId("tenant-a"), DocumentId("document-a"))
-    assert stored is not None and stored.status is DocumentStatus.PENDING_UPLOAD
-
-
-@pytest.mark.asyncio
-async def test_partial_deletion_can_be_retried_to_tombstone() -> None:
-    service, documents, _, _, sources, _, chunks, vectors = _service()
-    await service.register(_register())
-    sources.fail_delete = True
-    command = DeleteDocumentCommand(
-        tenant_id=TenantId("tenant-a"),
-        document_id=DocumentId("document-a"),
-        operation_id="delete-a",
-    )
-
-    with pytest.raises(DocumentDeletionError, match="remains"):
-        await service.delete_document(command)
-
-    deleting = await documents.get(TenantId("tenant-a"), DocumentId("document-a"))
-    assert deleting is not None and deleting.status is DocumentStatus.DELETING
-
-    sources.fail_delete = False
-    deleted = await service.delete_document(command)
-
-    assert deleted.status is DocumentStatus.DELETED
-    assert sources.deleted is True
-    assert chunks.deleted is True
-    assert vectors.deleted is True
