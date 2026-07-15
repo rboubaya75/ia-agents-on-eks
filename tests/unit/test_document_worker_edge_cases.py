@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 
 import pytest
@@ -5,6 +6,7 @@ from ia_application import (
     DocumentIngestionWorker,
     DocumentNotReadyError,
     IngestDocumentCommand,
+    IngestionHeartbeatError,
     IngestionTask,
     InvalidExtractionError,
     ReceivedIngestionTask,
@@ -33,6 +35,20 @@ class RaisingIngestion:
         raise self._error
 
 
+class CancellableIngestion:
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    async def ingest(self, command: IngestDocumentCommand) -> IngestionJob:
+        del command
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        raise AssertionError("unreachable")
+
+
 class MinimalQueue:
     def __init__(self, received: ReceivedIngestionTask | None) -> None:
         self.received = received
@@ -52,7 +68,10 @@ class MinimalQueue:
         return True
 
 
-class LostLeaseRepository:
+class SequencedLeaseRepository:
+    def __init__(self, renewals: list[bool]) -> None:
+        self._renewals = renewals
+
     async def renew(
         self,
         *,
@@ -60,11 +79,14 @@ class LostLeaseRepository:
         document_id: DocumentId,
         source_version: str,
         owner_token: str,
+        fencing_token: int,
+        execution_token: str,
         expires_at: object,
         now: object,
     ) -> bool:
-        del tenant_id, document_id, source_version, owner_token, expires_at, now
-        return False
+        del tenant_id, document_id, source_version, owner_token
+        del fencing_token, execution_token, expires_at, now
+        return self._renewals.pop(0)
 
 
 @pytest.mark.asyncio
@@ -170,7 +192,7 @@ async def test_worker_acknowledges_deterministic_ingestion_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_worker_leaves_unexpected_error_unacknowledged() -> None:
+async def test_worker_surfaces_unexpected_error_without_acknowledging() -> None:
     jobs = InMemoryIngestionJobRepository()
     await jobs.submit(_pending())
     queue = FakeQueue(_received())
@@ -180,7 +202,8 @@ async def test_worker_leaves_unexpected_error_unacknowledged() -> None:
         ingestion=RaisingIngestion(RuntimeError("infrastructure unavailable")),
     )
 
-    assert await worker.run_once(wait_seconds=0) is False
+    with pytest.raises(RuntimeError, match="infrastructure unavailable"):
+        await worker.run_once(wait_seconds=0)
     assert queue.acknowledged == []
 
 
@@ -199,28 +222,41 @@ async def test_worker_fails_closed_when_heartbeat_dependencies_are_missing() -> 
         visibility_timeout_seconds=30,
     )
 
-    assert await worker.run_once(wait_seconds=0) is False
+    with pytest.raises(IngestionHeartbeatError, match="lease repository"):
+        await worker.run_once(wait_seconds=0)
 
 
 @pytest.mark.asyncio
-async def test_worker_fails_closed_after_lease_loss() -> None:
+async def test_worker_cancels_ingestion_after_confirmed_lease_loss() -> None:
     jobs = InMemoryIngestionJobRepository()
-    await jobs.submit(_pending())
+    running = _pending().model_copy(
+        update={
+            "status": IngestionStatus.RUNNING,
+            "fingerprint": "f" * 64,
+            "generation_id": "generation-a",
+            "fencing_token": 7,
+        }
+    )
+    await jobs.save(running)
     queue = FakeQueue(_received())
-    ingestion = FakeIngestion()
-    ingestion.sleep_seconds = 1.1
+    ingestion = CancellableIngestion()
     worker = DocumentIngestionWorker(
         jobs=jobs,
-        leases=LostLeaseRepository(),
+        leases=SequencedLeaseRepository([True, False]),
         queue=queue,
         ingestion=ingestion,
         lease_ttl_seconds=30,
         heartbeat_interval_seconds=1,
         visibility_timeout_seconds=30,
+        execution_token_factory=lambda: "execution-a",
     )
 
-    assert await worker.run_once(wait_seconds=0) is False
-    assert queue.visibility_extensions == []
+    with pytest.raises(IngestionHeartbeatError, match="lease was lost"):
+        await worker.run_once(wait_seconds=0)
+
+    assert ingestion.cancelled is True
+    assert queue.visibility_extensions == [30]
+    assert queue.acknowledged == []
 
 
 @pytest.mark.asyncio
@@ -234,6 +270,7 @@ async def test_worker_requires_visibility_extension_after_lease_resolution() -> 
         document_id=pending.document_id,
         source_version=pending.source_version,
         owner_token=str(pending.job_id),
+        execution_token="execution-a",
         expires_at=NOW + timedelta(seconds=30),
         now=NOW,
     )
@@ -248,6 +285,8 @@ async def test_worker_requires_visibility_extension_after_lease_resolution() -> 
         heartbeat_interval_seconds=1,
         visibility_timeout_seconds=30,
         clock=lambda: NOW,
+        execution_token_factory=lambda: "execution-a",
     )
 
-    assert await worker.run_once(wait_seconds=0) is False
+    with pytest.raises(IngestionHeartbeatError, match="extend visibility"):
+        await worker.run_once(wait_seconds=0)
