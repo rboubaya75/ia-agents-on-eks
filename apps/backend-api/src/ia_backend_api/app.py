@@ -5,7 +5,6 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Header, Request, status
 from ia_application import (
     CreateSourceUploadCommand,
-    DeleteDocumentCommand,
     DocumentDeletionError,
     DocumentManagement,
     DocumentManagementError,
@@ -29,7 +28,6 @@ from ia_backend_api.schemas import (
     CreateDocumentRequest,
     CreateSessionRequest,
     CreateUploadRequest,
-    DeleteDocumentResponse,
     DeleteSessionResponse,
     DocumentResponse,
     DocumentView,
@@ -501,40 +499,6 @@ def create_app(container: AppContainer) -> FastAPI:
             request_id=_request_id(request),
             trace_id=_trace_id(request),
             job=IngestionJobView.from_domain(job),
-        )
-
-    @app.delete(
-        "/api/v1/documents/{document_id}",
-        response_model=DeleteDocumentResponse,
-        tags=["documents"],
-    )
-    async def delete_document(
-        document_id: str,
-        request: Request,
-        principal: Annotated[Principal, Depends(get_principal)],
-        dependencies: Annotated[AppContainer, Depends(get_container)],
-    ) -> DeleteDocumentResponse:
-        ensure_scopes(principal, {dependencies.scopes.document_write})
-        _ensure_document_manager(principal)
-        service = _document_service(dependencies)
-        try:
-            await _authorized_document(service, principal, document_id)
-            deleted = await service.delete_document(
-                DeleteDocumentCommand(
-                    tenant_id=principal.tenant_id,
-                    document_id=DocumentId(document_id),
-                    operation_id=dependencies.new_id(),
-                )
-            )
-        except ApiError:
-            raise
-        except Exception as error:
-            raise _document_api_error(error) from error
-        return DeleteDocumentResponse(
-            request_id=_request_id(request),
-            trace_id=_trace_id(request),
-            document_id=str(deleted.document_id),
-            deleted=True,
         )
 
     return app
