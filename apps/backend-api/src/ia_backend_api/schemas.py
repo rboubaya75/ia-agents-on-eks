@@ -9,7 +9,7 @@ from ia_domain import (
     IngestionJob,
     Role,
 )
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def _to_camel(value: str) -> str:
@@ -236,3 +236,12 @@ class DeleteDocumentResponse(ApiModel):
     document_id: str
     status: str
     deleted: bool
+
+    @model_validator(mode="before")
+    @classmethod
+    def derive_deleted_from_status(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        normalized = dict(value)
+        normalized["deleted"] = normalized.get("status") == "deleted"
+        return normalized
