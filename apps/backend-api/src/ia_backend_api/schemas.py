@@ -228,10 +228,3 @@ class IngestionJobResponse(ApiModel):
     request_id: str
     trace_id: str
     job: IngestionJobView
-
-
-class DeleteDocumentResponse(ApiModel):
-    request_id: str
-    trace_id: str
-    document_id: str
-    deleted: bool
