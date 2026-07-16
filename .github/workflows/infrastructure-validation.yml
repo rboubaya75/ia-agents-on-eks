@@ -51,8 +51,12 @@ jobs:
         run: terraform validate
 
       - name: Test module
+        id: terraform_test
         working-directory: infra/terraform/modules/document-data-plane
-        run: terraform test -no-color
+        shell: bash
+        run: |
+          set -o pipefail
+          terraform test -no-color 2>&1 | tee terraform-test.log
 
       - name: Initialize development composition
         working-directory: infra/terraform/environments/dev
@@ -91,6 +95,15 @@ jobs:
             echo "Committed AWS ARNs are forbidden in the reusable module" >&2
             exit 1
           fi
+
+      - name: Upload Terraform test failure log
+        if: failure() && steps.terraform_test.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: terraform-test-failure-log
+          path: infra/terraform/modules/document-data-plane/terraform-test.log
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload canonical Terraform sources and provider lock
         if: always()
