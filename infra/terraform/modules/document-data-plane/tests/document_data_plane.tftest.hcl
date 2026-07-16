@@ -62,7 +62,12 @@ run "secure_aws_managed_defaults" {
 
   assert {
     condition     = one(one(aws_s3_bucket_lifecycle_configuration.documents.rule).expiration).days == 1
-    error_message = "Temporary uploads must expire after exactly one day."
+    error_message = "Current temporary-upload versions must expire after exactly one day."
+  }
+
+  assert {
+    condition     = one(one(aws_s3_bucket_lifecycle_configuration.documents.rule).noncurrent_version_expiration).noncurrent_days == 1
+    error_message = "Noncurrent temporary-upload versions must expire after exactly one day."
   }
 
   assert {
@@ -76,13 +81,13 @@ run "secure_aws_managed_defaults" {
   }
 
   assert {
-    condition     = aws_s3vectors_index.documents.dimension == 1024 && aws_s3vectors_index.documents.distance_metric == "cosine"
-    error_message = "The vector index must match the configured immutable embedding contract."
+    condition     = aws_s3vectors_index.documents["g001"].dimension == 1024 && aws_s3vectors_index.documents["g001"].distance_metric == "cosine"
+    error_message = "The active vector index must match the configured immutable embedding contract."
   }
 
   assert {
-    condition     = strcontains(aws_s3vectors_index.documents.index_name, "-g001-")
-    error_message = "The vector index name must expose the explicit generation."
+    condition     = strcontains(aws_s3vectors_index.documents["g001"].index_name, "-g001-")
+    error_message = "The active vector index name must expose the explicit generation."
   }
 
   assert {
@@ -144,19 +149,53 @@ run "reject_non_filterable_authorization_metadata" {
     ]
   }
 
-  expect_failures = [aws_s3vectors_index.documents]
+  expect_failures = [aws_s3vectors_index.documents["g001"]]
 }
 
-run "new_embedding_revision_creates_distinct_index_name" {
+run "reject_index_prefix_inside_temporary_uploads" {
+  command = plan
+
+  variables {
+    document_index_prefix = "documents/uploads"
+  }
+
+  expect_failures = [aws_s3_bucket_lifecycle_configuration.documents]
+}
+
+run "parallel_vector_index_migration" {
   command = plan
 
   variables {
     embedding_profile_revision = "rev-002"
     vector_index_generation    = "g002"
+    retained_vector_index_contracts = {
+      g001 = {
+        embedding_profile_alias    = "titan-v2"
+        embedding_profile_revision = "rev-001"
+        embedding_dimensions       = 1024
+        distance_metric            = "cosine"
+        encryption_revision        = "enc-v1"
+      }
+    }
   }
 
   assert {
-    condition     = aws_s3vectors_index.documents.index_name != run.secure_aws_managed_defaults.vector_index_name
-    error_message = "A new embedding revision and generation must produce a distinct vector index name."
+    condition     = length(aws_s3vectors_index.documents) == 2
+    error_message = "Migration must retain the previous index while creating the new active index."
+  }
+
+  assert {
+    condition     = contains(keys(aws_s3vectors_index.documents), "g001") && contains(keys(aws_s3vectors_index.documents), "g002")
+    error_message = "Both the retained and active generations must exist in the same plan."
+  }
+
+  assert {
+    condition     = aws_s3vectors_index.documents["g001"].index_name != aws_s3vectors_index.documents["g002"].index_name
+    error_message = "Retained and active generations must have distinct immutable index names."
+  }
+
+  assert {
+    condition     = output.vector_index_name == aws_s3vectors_index.documents["g002"].index_name
+    error_message = "Application outputs must select only the active generation during migration."
   }
 }
