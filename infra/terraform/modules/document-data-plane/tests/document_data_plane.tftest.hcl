@@ -12,12 +12,12 @@ variables {
   aws_region  = "eu-west-3"
   vector_index_generations = {
     g001 = {
-      active                              = true
-      embedding_profile_alias             = "titan-v2"
-      embedding_profile_revision          = "rev-001"
-      embedding_dimensions                = 1024
-      vector_distance_metric              = "cosine"
-      vector_encryption_revision           = "enc-v1"
+      active                     = true
+      embedding_profile_alias    = "titan-v2"
+      embedding_profile_revision = "rev-001"
+      embedding_dimensions       = 1024
+      vector_distance_metric     = "cosine"
+      vector_encryption_revision = "enc-v1"
       vector_non_filterable_metadata_keys = [
         "checksum",
         "chunkId",
@@ -183,12 +183,12 @@ run "reject_non_filterable_authorization_metadata" {
   variables {
     vector_index_generations = {
       g001 = {
-        active                              = true
-        embedding_profile_alias             = "titan-v2"
-        embedding_profile_revision          = "rev-001"
-        embedding_dimensions                = 1024
-        vector_distance_metric              = "cosine"
-        vector_encryption_revision           = "enc-v1"
+        active                     = true
+        embedding_profile_alias    = "titan-v2"
+        embedding_profile_revision = "rev-001"
+        embedding_dimensions       = 1024
+        vector_distance_metric     = "cosine"
+        vector_encryption_revision = "enc-v1"
         vector_non_filterable_metadata_keys = [
           "allowedRoles",
           "checksum",
@@ -211,7 +211,7 @@ run "reject_multiple_active_vector_generations" {
         embedding_profile_revision          = "rev-001"
         embedding_dimensions                = 1024
         vector_distance_metric              = "cosine"
-        vector_encryption_revision           = "enc-v1"
+        vector_encryption_revision          = "enc-v1"
         vector_non_filterable_metadata_keys = ["checksum"]
       }
       g002 = {
@@ -220,7 +220,7 @@ run "reject_multiple_active_vector_generations" {
         embedding_profile_revision          = "rev-002"
         embedding_dimensions                = 1024
         vector_distance_metric              = "cosine"
-        vector_encryption_revision           = "enc-v1"
+        vector_encryption_revision          = "enc-v1"
         vector_non_filterable_metadata_keys = ["checksum"]
       }
     }
@@ -246,24 +246,24 @@ run "retain_previous_and_activate_new_vector_generation" {
   variables {
     vector_index_generations = {
       g001 = {
-        active                              = false
-        embedding_profile_alias             = "titan-v2"
-        embedding_profile_revision          = "rev-001"
-        embedding_dimensions                = 1024
-        vector_distance_metric              = "cosine"
-        vector_encryption_revision           = "enc-v1"
+        active                     = false
+        embedding_profile_alias    = "titan-v2"
+        embedding_profile_revision = "rev-001"
+        embedding_dimensions       = 1024
+        vector_distance_metric     = "cosine"
+        vector_encryption_revision = "enc-v1"
         vector_non_filterable_metadata_keys = [
           "checksum",
           "chunkId",
         ]
       }
       g002 = {
-        active                              = true
-        embedding_profile_alias             = "titan-v2"
-        embedding_profile_revision          = "rev-002"
-        embedding_dimensions                = 1024
-        vector_distance_metric              = "cosine"
-        vector_encryption_revision           = "enc-v1"
+        active                     = true
+        embedding_profile_alias    = "titan-v2"
+        embedding_profile_revision = "rev-002"
+        embedding_dimensions       = 1024
+        vector_distance_metric     = "cosine"
+        vector_encryption_revision = "enc-v1"
         vector_non_filterable_metadata_keys = [
           "checksum",
           "chunkId",
