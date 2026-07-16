@@ -136,12 +136,12 @@ output "embedding_dimensions" {
 output "application_runtime_settings" {
   description = "Authoritative non-secret runtime settings for later Helm composition."
   value = {
-    IA_DOCUMENT_CONTROL_TABLE                       = aws_dynamodb_table.document_control.name
-    IA_DOCUMENT_BUCKET                              = aws_s3_bucket.documents.bucket
-    IA_DOCUMENT_SOURCE_PREFIX                       = var.document_source_prefix
-    IA_DOCUMENT_INDEX_PREFIX                        = var.document_index_prefix
-    IA_DOCUMENT_KMS_KEY_ID                          = local.effective_kms_key_arn
-    IA_DOCUMENT_MAX_SOURCE_BYTES                    = tostring(var.document_max_source_bytes)
+    IA_DOCUMENT_CONTROL_TABLE                        = aws_dynamodb_table.document_control.name
+    IA_DOCUMENT_BUCKET                               = aws_s3_bucket.documents.bucket
+    IA_DOCUMENT_SOURCE_PREFIX                        = var.document_source_prefix
+    IA_DOCUMENT_INDEX_PREFIX                         = var.document_index_prefix
+    IA_DOCUMENT_KMS_KEY_ID                           = local.effective_kms_key_arn
+    IA_DOCUMENT_MAX_SOURCE_BYTES                     = tostring(var.document_max_source_bytes)
     IA_DOCUMENT_UPLOAD_LIFECYCLE_RULE_ID             = local.lifecycle_rule_id
     IA_DOCUMENT_INGESTION_QUEUE_URL                  = aws_sqs_queue.ingestion.id
     IA_DOCUMENT_QUEUE_VISIBILITY_TIMEOUT_SECONDS     = tostring(var.queue_visibility_timeout_seconds)
