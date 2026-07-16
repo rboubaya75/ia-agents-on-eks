@@ -43,24 +43,8 @@ jobs:
           terraform_version: 1.15.8
           terraform_wrapper: false
 
-      - name: Generate canonical Terraform formatting
-        run: |
-          terraform fmt -recursive infra/terraform
-          git diff --name-only -- infra/terraform > terraform-format-changes.txt
-
-      - name: Upload canonically formatted Terraform
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: canonically-formatted-terraform
-          path: |
-            infra/terraform
-            terraform-format-changes.txt
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Verify Terraform formatting
-        run: git diff --exit-code -- infra/terraform
+      - name: Terraform format
+        run: terraform fmt -check -recursive infra/terraform
 
       - name: Initialize module
         working-directory: infra/terraform/modules/document-data-plane
@@ -100,6 +84,7 @@ jobs:
         run: |
           set -euo pipefail
           module="infra/terraform/modules/document-data-plane"
+          dev="infra/terraform/environments/dev"
 
           if grep -R --line-number --fixed-strings --include='*.tf' "force_destroy = true" "${module}"; then
             echo "force_destroy=true is forbidden for durable document resources" >&2
@@ -110,8 +95,16 @@ jobs:
             grep -q --fixed-strings "prevent_destroy = true" "${module}/${file}"
           done
 
+          grep -q --fixed-strings 'noncurrent_version_expiration {' "${module}/s3.tf"
+          grep -q --fixed-strings 'expired_object_delete_marker = true' "${module}/s3.tf"
+          grep -q --fixed-strings '!startswith(local.chunk_prefix, local.temporary_upload_prefix)' "${module}/s3.tf"
+          grep -q --fixed-strings 'for_each = local.vector_index_contracts' "${module}/s3vectors.tf"
+
           grep -q --fixed-strings 'redrive_policy = jsonencode({' "${module}/sqs.tf"
           grep -q --fixed-strings 'resource "aws_sqs_queue_redrive_allow_policy"' "${module}/sqs.tf"
+
+          grep -q --fixed-strings 'REPLACE_WITH_REMOTE_STATE_KEY' "${dev}/backend.hcl.example"
+          grep -q --fixed-strings 'REPLACE_WITH_AWS_REGION' "${dev}/terraform.tfvars.example"
 
           if grep -R --line-number -E 'arn:(aws|aws-us-gov|aws-cn):' "${module}" --include='*.tf'; then
             echo "Committed AWS ARNs are forbidden in the reusable module" >&2
