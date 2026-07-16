@@ -1,4 +1,4 @@
-aws_region = "eu-west-3"
+aws_region = "REPLACE_WITH_AWS_REGION"
 
 name_prefix = "iaagents"
 
@@ -8,6 +8,10 @@ embedding_dimensions       = 1024
 vector_distance_metric     = "cosine"
 vector_index_generation    = "g001"
 vector_encryption_revision = "enc-v1"
+
+# During a create-before-cutover migration, retain the previous immutable
+# contract here while selecting the new generation above.
+retained_vector_index_contracts = {}
 
 encryption_mode = "AES256"
 create_kms_key  = false
