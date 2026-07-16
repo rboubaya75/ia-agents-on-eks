@@ -6,8 +6,11 @@ on:
       - "infra/**"
       - ".gitignore"
       - "docs/adr/0011-document-infrastructure-and-deployment.md"
+      - "docs/adr/0012-terraform-industrialization-model.md"
       - "docs/architecture/phase-4-document-infrastructure-plan.md"
       - "docs/architecture/phase-4b-document-data-plane.md"
+      - "docs/architecture/phase-4c0-terraform-industrialization-plan.md"
+      - "docs/architecture/phase-4c0b1-encryption-storage.md"
       - ".github/workflows/infrastructure-validation.yml"
   push:
     branches:
@@ -17,8 +20,11 @@ on:
       - "infra/**"
       - ".gitignore"
       - "docs/adr/0011-document-infrastructure-and-deployment.md"
+      - "docs/adr/0012-terraform-industrialization-model.md"
       - "docs/architecture/phase-4-document-infrastructure-plan.md"
       - "docs/architecture/phase-4b-document-data-plane.md"
+      - "docs/architecture/phase-4c0-terraform-industrialization-plan.md"
+      - "docs/architecture/phase-4c0b1-encryption-storage.md"
       - ".github/workflows/infrastructure-validation.yml"
 
 permissions:
@@ -29,9 +35,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  terraform-document-data-plane:
+  terraform-infrastructure:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -46,21 +52,41 @@ jobs:
       - name: Terraform format
         run: terraform fmt -check -recursive infra/terraform
 
-      - name: Initialize module
-        working-directory: infra/terraform/modules/document-data-plane
-        run: terraform init -backend=false -input=false
-
-      - name: Validate module
-        working-directory: infra/terraform/modules/document-data-plane
-        run: terraform validate
-
-      - name: Test module
-        id: terraform_test
-        working-directory: infra/terraform/modules/document-data-plane
+      - name: Initialize and validate reusable configurations
         shell: bash
         run: |
+          set -euo pipefail
+          configurations=(
+            "infra/terraform/modules/document-data-plane"
+            "infra/terraform/modules/document-encryption"
+            "infra/terraform/modules/document-encryption/examples/complete"
+            "infra/terraform/modules/document-storage"
+            "infra/terraform/modules/document-storage/examples/complete"
+            "infra/terraform/stacks/document-platform"
+          )
+
+          for configuration in "${configurations[@]}"; do
+            terraform -chdir="${configuration}" init -backend=false -input=false
+            terraform -chdir="${configuration}" validate
+          done
+
+      - name: Test Terraform modules and stack
+        id: terraform_test
+        shell: bash
+        run: |
+          set -euo pipefail
           set -o pipefail
-          terraform test -no-color 2>&1 | tee terraform-test.log
+          test_roots=(
+            "infra/terraform/modules/document-data-plane"
+            "infra/terraform/modules/document-encryption"
+            "infra/terraform/modules/document-storage"
+            "infra/terraform/stacks/document-platform"
+          )
+
+          for test_root in "${test_roots[@]}"; do
+            log_name="$(echo "${test_root}" | tr '/' '-')-terraform-test.log"
+            terraform -chdir="${test_root}" test -no-color 2>&1 | tee "${log_name}"
+          done
 
       - name: Initialize development composition
         working-directory: infra/terraform/environments/dev
@@ -79,38 +105,83 @@ jobs:
           git diff --exit-code -- "${lock_file}"
           test -z "$(git status --porcelain -- "${lock_file}")"
 
-      - name: Static document data-plane guardrails
+      - name: Enforce 4C-0B1 ownership gate
         shell: bash
         run: |
           set -euo pipefail
-          module="infra/terraform/modules/document-data-plane"
+          active_root="infra/terraform/environments/dev/main.tf"
 
-          if grep -R --line-number --fixed-strings --include='*.tf' "force_destroy = true" "${module}"; then
+          grep -q --fixed-strings 'source = "../../modules/document-data-plane"' "${active_root}"
+
+          if grep -E 'document-encryption|document-storage|stacks/document-platform' "${active_root}"; then
+            echo "4C-0B1 must not connect preparatory modules to the active development root" >&2
+            exit 1
+          fi
+
+          test ! -d "infra/terraform/live"
+
+          if find infra/terraform -name 'moved.tf' -print -quit | grep -q .; then
+            echo "4C-0B1 must not introduce production moved blocks" >&2
+            exit 1
+          fi
+
+      - name: Transitional Terraform guardrails
+        shell: bash
+        run: |
+          set -euo pipefail
+          legacy="infra/terraform/modules/document-data-plane"
+          encryption="infra/terraform/modules/document-encryption"
+          storage="infra/terraform/modules/document-storage"
+          stack="infra/terraform/stacks/document-platform"
+
+          if grep -R --line-number --fixed-strings --include='*.tf' "force_destroy = true" "${legacy}" "${storage}"; then
             echo "force_destroy=true is forbidden for durable document resources" >&2
             exit 1
           fi
 
           for file in dynamodb.tf kms.tf s3.tf s3vectors.tf; do
-            grep -q --fixed-strings "prevent_destroy = true" "${module}/${file}"
+            grep -q --fixed-strings "prevent_destroy = true" "${legacy}/${file}"
           done
 
-          grep -q --fixed-strings "noncurrent_version_expiration" "${module}/s3.tf"
-          grep -q --fixed-strings "!startswith(local.chunk_prefix, local.temporary_upload_prefix)" "${module}/s3.tf"
-          grep -q --fixed-strings "for_each = local.vector_index_definitions" "${module}/s3vectors.tf"
-          grep -q --fixed-strings "retained_vector_index_contracts" "${module}/vector_migration_variables.tf"
-          grep -q --fixed-strings 'redrive_policy = jsonencode({' "${module}/sqs.tf"
-          grep -q --fixed-strings 'resource "aws_sqs_queue_redrive_allow_policy"' "${module}/sqs.tf"
+          grep -q --fixed-strings "noncurrent_version_expiration" "${legacy}/s3.tf"
+          grep -q --fixed-strings "!startswith(local.chunk_prefix, local.temporary_upload_prefix)" "${legacy}/s3.tf"
+          grep -q --fixed-strings "for_each = local.vector_index_definitions" "${legacy}/s3vectors.tf"
+          grep -q --fixed-strings "retained_vector_index_contracts" "${legacy}/vector_migration_variables.tf"
+          grep -q --fixed-strings 'redrive_policy = jsonencode({' "${legacy}/sqs.tf"
+          grep -q --fixed-strings 'resource "aws_sqs_queue_redrive_allow_policy"' "${legacy}/sqs.tf"
 
-          if grep -R --line-number -E 'arn:(aws|aws-us-gov|aws-cn):' "${module}" --include='*.tf'; then
-            echo "Committed AWS ARNs are forbidden in the reusable module" >&2
+          if grep -R --line-number -E 'arn:(aws|aws-us-gov|aws-cn):' "${legacy}" --include='*.tf'; then
+            echo "Committed AWS ARNs are forbidden in the legacy reusable module" >&2
             exit 1
           fi
 
-      - name: Upload Terraform test failure log
+          grep -q --fixed-strings "prevent_destroy = true" "${encryption}/main.tf"
+          grep -q --fixed-strings "prevent_destroy = true" "${storage}/main.tf"
+          grep -q --fixed-strings "noncurrent_version_expiration" "${storage}/main.tf"
+          grep -q --fixed-strings "!startswith(local.chunk_prefix, local.temporary_upload_prefix)" "${storage}/main.tf"
+
+          for root in "${encryption}" "${storage}" "${stack}"; do
+            if grep -R --line-number --include='*.tf' -E '^[[:space:]]*provider[[:space:]]+"' "${root}" --exclude-dir=examples; then
+              echo "Provider blocks are forbidden in reusable modules and stacks" >&2
+              exit 1
+            fi
+
+            if grep -R --line-number --include='*.tf' -E '^[[:space:]]*backend[[:space:]]+"' "${root}"; then
+              echo "Backend blocks are forbidden in reusable modules and stacks" >&2
+              exit 1
+            fi
+
+            if grep -R --line-number -E 'arn:(aws|aws-us-gov|aws-cn):' "${root}" --include='*.tf' --exclude='*.tftest.hcl'; then
+              echo "Committed AWS ARNs are forbidden in reusable implementation code" >&2
+              exit 1
+            fi
+          done
+
+      - name: Upload Terraform test failure logs
         if: failure() && steps.terraform_test.outcome == 'failure'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: terraform-test-failure-log
-          path: infra/terraform/modules/document-data-plane/terraform-test.log
+          name: terraform-test-failure-logs
+          path: "**/*-terraform-test.log"
           if-no-files-found: error
           retention-days: 7
