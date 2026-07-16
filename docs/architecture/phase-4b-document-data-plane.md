@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented on `feature/phase-4b-document-data-plane` for review. This increment creates deployable Terraform definitions but does not plan or apply them against an AWS account.
+Implemented on `feature/phase-4b-document-data-plane-corrections` for review. This increment creates deployable Terraform definitions but does not plan or apply them against an AWS account.
 
 ADR-0011 remains the governing architecture decision. This implementation does not change the accepted boundaries: workload IAM, EKS Pod Identity, Helm, deployment OIDC and real AWS integration remain later phases.
 
@@ -14,6 +14,7 @@ infra/terraform/
 │   └── document-data-plane/
 │       ├── versions.tf
 │       ├── variables.tf
+│       ├── vector_migration_variables.tf
 │       ├── locals.tf
 │       ├── kms.tf
 │       ├── dynamodb.tf
@@ -29,6 +30,7 @@ infra/terraform/
         ├── versions.tf
         ├── providers.tf
         ├── variables.tf
+        ├── vector_migration_variables.tf
         ├── main.tf
         ├── outputs.tf
         ├── .terraform.lock.hcl
@@ -51,63 +53,57 @@ sort key:      sk (String)
 
 The table enables server-side encryption, point-in-time recovery and deletion protection. Terraform also applies `prevent_destroy`; table retirement therefore requires a separate reviewed change.
 
-TTL is not enabled. The current application does not require DynamoDB TTL for its durable document, job, generation and lease records.
-
 ### S3 document storage
 
-The document bucket is:
+The document bucket is private, bucket-owner enforced, versioned, encrypted, TLS-only and protected by `prevent_destroy` with `force_destroy = false`.
 
-- private through all four S3 public-access-block controls;
-- bucket-owner enforced;
-- versioned;
-- encrypted with AWS-managed AES-256 or a configured customer-managed KMS key;
-- protected by `prevent_destroy` and `force_destroy = false`;
-- restricted to TLS requests;
-- configured to reject uploads that omit or contradict the selected encryption contract.
-
-The temporary lifecycle rule applies only to:
+The temporary lifecycle applies only to:
 
 ```text
 <document_source_prefix>/uploads/
 ```
 
-It expires temporary uploads after exactly one day, matching the application readiness check. It does not expire immutable sources or active chunk generations. Incomplete multipart uploads are aborted independently.
+It expires both current and noncurrent temporary object versions after exactly one day. This prevents versioned temporary uploads from remaining indefinitely after expiration or application deletion. Incomplete multipart uploads are aborted independently.
+
+Terraform rejects a `document_index_prefix` equal to or below the temporary-upload prefix. Durable chunks and vector manifests therefore cannot be selected by the one-day lifecycle rule.
 
 ### FIFO ingestion queue
 
-The module creates:
+The module creates one encrypted FIFO ingestion queue, one encrypted FIFO dead-letter queue, an explicit redrive policy, a restricted redrive allow policy, long polling and configurable retention.
 
-- one encrypted FIFO ingestion queue;
-- one encrypted FIFO dead-letter queue;
-- an explicit redrive policy;
-- a redrive allow policy restricted to the ingestion queue;
-- long polling and configurable retention.
-
-Terraform rejects unsafe worker timing when:
+Terraform rejects unsafe timing when:
 
 - visibility timeout is lower than the ingestion lease TTL;
 - heartbeat is greater than half the lease TTL;
 - heartbeat is greater than half the visibility timeout;
 - DLQ retention is shorter than source-queue retention.
 
-The application continues to supply the deterministic message group and deduplication identifiers; content-based deduplication remains disabled.
-
 ### S3 Vectors
 
-The vector bucket and index use native AWS provider resources. Both are protected from routine destruction.
+The vector bucket and every index use native AWS provider resources and are protected from routine destruction.
 
-The index name deterministically represents an immutable contract containing:
+Indexes are managed as a generation-keyed collection. The active contract is defined by:
 
 - embedding profile alias;
 - embedding profile revision;
 - vector dimension;
 - distance metric;
-- explicit index generation;
-- encryption mode and encryption revision.
+- active index generation;
+- encryption revision.
 
-Changing that contract produces a distinct index name. It does not mutate or replace the active index in place.
+Previously active contracts are supplied through `retained_vector_index_contracts`. Terraform can therefore manage the previous and next generations concurrently while application outputs select only the active generation.
 
-The metadata keys required for tenant and authorization filtering remain filterable:
+Migration sequence:
+
+1. add the current contract to `retained_vector_index_contracts`;
+2. configure the new active contract and generation;
+3. create both indexes in the same plan;
+4. re-index and verify coverage;
+5. switch application configuration to the new active output;
+6. observe the stabilization period;
+7. retire the old generation in a separate reviewed change.
+
+The required authorization metadata keys remain filterable:
 
 ```text
 tenantId
@@ -116,8 +112,6 @@ allowedRoles
 generationId
 ```
 
-Terraform rejects configurations that mark one of those keys as non-filterable.
-
 ### KMS
 
 Two encryption modes are supported:
@@ -125,40 +119,17 @@ Two encryption modes are supported:
 - `AES256`, with no customer-managed key input;
 - `aws:kms`, with exactly one module-managed key or existing key ARN.
 
-A module-managed key enables rotation and uses `prevent_destroy`. Phase 4C will define the API and worker key-use permissions; this phase does not create workload IAM.
+A module-managed key enables rotation and uses `prevent_destroy`. Phase 4C will define workload key-use permissions.
 
-## Naming and AWS identifiers
+## Naming and external values
 
-No account ID, ARN, region or resource name is hardcoded.
+No account ID, ARN, region, remote-state bucket or state key is hardcoded.
 
-Global names are derived from typed inputs plus the trusted current AWS account identity and configured region. The committed examples contain placeholders only. The reusable module rejects fixed AWS ARNs through the infrastructure validation workflow.
+Global names are derived from typed inputs plus the current AWS account identity and configured region. Backend and environment example files contain placeholders only.
 
 ## Application output mapping
 
-The module exposes individual resource outputs and an `application_runtime_settings` map for later Helm composition. It covers the merged settings for:
-
-- document control table;
-- document bucket and prefixes;
-- upload lifecycle rule ID;
-- maximum source size;
-- KMS key identifier when applicable;
-- ingestion queue URL and timing values;
-- S3 Vectors bucket and immutable index;
-- embedding profile alias, revision and dimensions.
-
-Feature activation, the resolved Bedrock model ID and pipeline version remain deployment inputs. They are not owned by this data-plane module.
-
-## Development composition
-
-`infra/terraform/environments/dev/` composes the reusable module with:
-
-- a partial S3 backend;
-- an AWS provider configured from an input region;
-- example backend and environment values containing placeholders only;
-- a committed provider lock file;
-- outputs intended for Phase 4C workload identity and Helm.
-
-The remote-state bucket, state role and real environment values are prerequisites. They are not created or committed in this increment.
+The module exposes individual resource outputs and an `application_runtime_settings` map for later Helm composition. Active runtime settings point only to the active vector generation. Separate maps expose all retained and active vector index names and ARNs for migration operations and later IAM policy composition.
 
 ## Automated validation
 
@@ -174,21 +145,20 @@ terraform test
 dev init without backend and with lockfile=readonly
 dev validate
 provider-lock integrity check
-static destruction, redrive and hardcoded-ARN guardrails
+static destruction, lifecycle, prefix, migration, redrive and hardcoded-ARN guardrails
 ```
 
 The Terraform test suite covers:
 
-- the DynamoDB `pk`/`sk` schema and on-demand mode;
-- deletion protection;
-- S3 public blocking, versioning and exact temporary lifecycle;
+- DynamoDB `pk`/`sk`, on-demand capacity and deletion protection;
+- S3 public blocking, versioning and current/noncurrent temporary expiration;
+- rejection of a chunk prefix under temporary uploads;
 - FIFO queue and DLQ selection;
-- vector dimensions, metric, generation and destruction controls;
-- the customer-managed KMS path;
-- rejection of incomplete KMS configuration;
-- rejection of unsafe SQS/lease timing;
+- KMS and AWS-managed encryption contracts;
+- rejection of unsafe SQS and lease timing;
 - rejection of non-filterable authorization metadata;
-- creation of a distinct vector index for a new embedding revision and generation.
+- concurrent planning of retained and active vector index generations;
+- active runtime output selection during migration.
 
 ## Deferred work
 
@@ -202,4 +172,4 @@ This increment intentionally does not implement:
 - AWS deployment or integration testing;
 - frontend, durable deletion, retrieval or custom agents.
 
-Those items remain subject to their existing phase gates. Phase 4C must not start until this Phase 4B pull request is approved and merged.
+Phase 4C must not start until this corrected Phase 4B pull request is approved and merged.
