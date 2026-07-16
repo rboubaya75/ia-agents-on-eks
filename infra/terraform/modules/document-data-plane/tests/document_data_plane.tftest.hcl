@@ -128,7 +128,7 @@ run "reject_unsafe_worker_timing" {
   variables {
     queue_visibility_timeout_seconds = 600
     ingestion_lease_ttl_seconds      = 900
-    heartbeat_interval_seconds       = 400
+    heartbeat_interval_seconds       = 300
   }
 
   expect_failures = [aws_sqs_queue.ingestion]
