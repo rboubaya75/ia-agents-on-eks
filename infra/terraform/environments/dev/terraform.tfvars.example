@@ -1,13 +1,25 @@
-aws_region = "eu-west-3"
+aws_region = "REPLACE_WITH_AWS_REGION"
 
 name_prefix = "iaagents"
 
-embedding_profile_alias    = "REPLACE_WITH_SERVER_PROFILE_ALIAS"
-embedding_profile_revision = "REPLACE_WITH_IMMUTABLE_PROFILE_REVISION"
-embedding_dimensions       = 1024
-vector_distance_metric     = "cosine"
-vector_index_generation    = "g001"
-vector_encryption_revision = "enc-v1"
+vector_index_generations = {
+  g001 = {
+    active                              = true
+    embedding_profile_alias             = "REPLACE_WITH_SERVER_PROFILE_ALIAS"
+    embedding_profile_revision          = "REPLACE_WITH_IMMUTABLE_PROFILE_REVISION"
+    embedding_dimensions                = 1024
+    vector_distance_metric              = "cosine"
+    vector_encryption_revision           = "enc-v1"
+    vector_non_filterable_metadata_keys = [
+      "checksum",
+      "chunkId",
+      "embeddingDimensions",
+      "embeddingModelId",
+      "pipelineVersion",
+      "sourceVersion",
+    ]
+  }
+}
 
 encryption_mode = "AES256"
 create_kms_key  = false
