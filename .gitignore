@@ -15,8 +15,9 @@ htmlcov/
 .idea/
 .vscode/
 
-# Terraform generated files. Provider lock files remain tracked.
+# Terraform generated files. Environment provider lock files remain tracked.
 **/.terraform/*
+infra/terraform/modules/**/.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 crash.log
