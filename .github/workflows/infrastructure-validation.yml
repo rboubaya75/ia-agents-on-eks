@@ -44,13 +44,17 @@ jobs:
           terraform_wrapper: false
 
       - name: Generate canonical Terraform formatting
-        run: terraform fmt -recursive infra/terraform
+        run: |
+          terraform fmt -recursive infra/terraform
+          git diff --name-only -- infra/terraform > terraform-format-changes.txt
 
       - name: Upload canonically formatted Terraform
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: canonically-formatted-terraform
-          path: infra/terraform
+          path: |
+            infra/terraform
+            terraform-format-changes.txt
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
