@@ -69,12 +69,36 @@ resource "aws_s3_bucket_lifecycle_configuration" "documents" {
       days = var.temporary_upload_expiration_days
     }
 
+    noncurrent_version_expiration {
+      noncurrent_days = var.temporary_upload_expiration_days
+    }
+
     abort_incomplete_multipart_upload {
       days_after_initiation = var.abort_incomplete_multipart_upload_days
     }
   }
 
+  rule {
+    id     = local.lifecycle_marker_rule_id
+    status = "Enabled"
+
+    filter {
+      prefix = local.temporary_upload_prefix
+    }
+
+    expiration {
+      expired_object_delete_marker = true
+    }
+  }
+
   depends_on = [aws_s3_bucket_versioning.documents]
+
+  lifecycle {
+    precondition {
+      condition     = !startswith("${var.document_index_prefix}/", local.temporary_upload_prefix)
+      error_message = "document_index_prefix must not be equal to or nested under the temporary upload prefix."
+    }
+  }
 }
 
 resource "aws_s3_bucket_policy" "documents" {
