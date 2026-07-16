@@ -7,11 +7,27 @@ mock_provider "aws" {
 }
 
 variables {
-  name_prefix                = "iaagents"
-  environment                = "dev"
-  aws_region                 = "eu-west-3"
-  embedding_profile_alias    = "titan-v2"
-  embedding_profile_revision = "rev-001"
+  name_prefix = "iaagents"
+  environment = "dev"
+  aws_region  = "eu-west-3"
+  vector_index_generations = {
+    g001 = {
+      active                              = true
+      embedding_profile_alias             = "titan-v2"
+      embedding_profile_revision          = "rev-001"
+      embedding_dimensions                = 1024
+      vector_distance_metric              = "cosine"
+      vector_encryption_revision           = "enc-v1"
+      vector_non_filterable_metadata_keys = [
+        "checksum",
+        "chunkId",
+        "embeddingDimensions",
+        "embeddingModelId",
+        "pipelineVersion",
+        "sourceVersion",
+      ]
+    }
+  }
   tags = {
     CostCenter = "platform"
   }
@@ -56,13 +72,35 @@ run "secure_aws_managed_defaults" {
   }
 
   assert {
-    condition     = one(one(aws_s3_bucket_lifecycle_configuration.documents.rule).filter).prefix == "documents/uploads/"
+    condition = one(one([
+      for rule in aws_s3_bucket_lifecycle_configuration.documents.rule : rule
+      if rule.id == "iaagents-dev-temporary-uploads"
+    ]).filter).prefix == "documents/uploads/"
     error_message = "The lifecycle rule must cover the complete temporary-upload prefix only."
   }
 
   assert {
-    condition     = one(one(aws_s3_bucket_lifecycle_configuration.documents.rule).expiration).days == 1
-    error_message = "Temporary uploads must expire after exactly one day."
+    condition = one(one([
+      for rule in aws_s3_bucket_lifecycle_configuration.documents.rule : rule
+      if rule.id == "iaagents-dev-temporary-uploads"
+    ]).expiration).days == 1
+    error_message = "Current temporary-upload versions must expire after exactly one day."
+  }
+
+  assert {
+    condition = one(one([
+      for rule in aws_s3_bucket_lifecycle_configuration.documents.rule : rule
+      if rule.id == "iaagents-dev-temporary-uploads"
+    ]).noncurrent_version_expiration).noncurrent_days == 1
+    error_message = "Noncurrent temporary-upload versions must expire after exactly one day."
+  }
+
+  assert {
+    condition = one(one([
+      for rule in aws_s3_bucket_lifecycle_configuration.documents.rule : rule
+      if rule.id == "iaagents-dev-temporary-upload-delete-markers"
+    ]).expiration).expired_object_delete_marker
+    error_message = "Expired temporary-upload delete markers must be removed."
   }
 
   assert {
@@ -76,13 +114,18 @@ run "secure_aws_managed_defaults" {
   }
 
   assert {
-    condition     = aws_s3vectors_index.documents.dimension == 1024 && aws_s3vectors_index.documents.distance_metric == "cosine"
+    condition     = aws_s3vectors_index.documents["g001"].dimension == 1024 && aws_s3vectors_index.documents["g001"].distance_metric == "cosine"
     error_message = "The vector index must match the configured immutable embedding contract."
   }
 
   assert {
-    condition     = strcontains(aws_s3vectors_index.documents.index_name, "-g001-")
+    condition     = strcontains(aws_s3vectors_index.documents["g001"].index_name, "-g001-")
     error_message = "The vector index name must expose the explicit generation."
+  }
+
+  assert {
+    condition     = output.vector_index_generation == "g001"
+    error_message = "The runtime output must select the only active generation."
   }
 
   assert {
@@ -138,25 +181,109 @@ run "reject_non_filterable_authorization_metadata" {
   command = plan
 
   variables {
-    vector_non_filterable_metadata_keys = [
-      "allowedRoles",
-      "checksum",
-    ]
+    vector_index_generations = {
+      g001 = {
+        active                              = true
+        embedding_profile_alias             = "titan-v2"
+        embedding_profile_revision          = "rev-001"
+        embedding_dimensions                = 1024
+        vector_distance_metric              = "cosine"
+        vector_encryption_revision           = "enc-v1"
+        vector_non_filterable_metadata_keys = [
+          "allowedRoles",
+          "checksum",
+        ]
+      }
+    }
   }
 
-  expect_failures = [aws_s3vectors_index.documents]
+  expect_failures = [var.vector_index_generations]
 }
 
-run "new_embedding_revision_creates_distinct_index_name" {
+run "reject_multiple_active_vector_generations" {
   command = plan
 
   variables {
-    embedding_profile_revision = "rev-002"
-    vector_index_generation    = "g002"
+    vector_index_generations = {
+      g001 = {
+        active                              = true
+        embedding_profile_alias             = "titan-v2"
+        embedding_profile_revision          = "rev-001"
+        embedding_dimensions                = 1024
+        vector_distance_metric              = "cosine"
+        vector_encryption_revision           = "enc-v1"
+        vector_non_filterable_metadata_keys = ["checksum"]
+      }
+      g002 = {
+        active                              = true
+        embedding_profile_alias             = "titan-v2"
+        embedding_profile_revision          = "rev-002"
+        embedding_dimensions                = 1024
+        vector_distance_metric              = "cosine"
+        vector_encryption_revision           = "enc-v1"
+        vector_non_filterable_metadata_keys = ["checksum"]
+      }
+    }
+  }
+
+  expect_failures = [var.vector_index_generations]
+}
+
+run "reject_chunk_prefix_under_temporary_uploads" {
+  command = plan
+
+  variables {
+    document_source_prefix = "documents"
+    document_index_prefix  = "documents/uploads"
+  }
+
+  expect_failures = [aws_s3_bucket_lifecycle_configuration.documents]
+}
+
+run "retain_previous_and_activate_new_vector_generation" {
+  command = plan
+
+  variables {
+    vector_index_generations = {
+      g001 = {
+        active                              = false
+        embedding_profile_alias             = "titan-v2"
+        embedding_profile_revision          = "rev-001"
+        embedding_dimensions                = 1024
+        vector_distance_metric              = "cosine"
+        vector_encryption_revision           = "enc-v1"
+        vector_non_filterable_metadata_keys = [
+          "checksum",
+          "chunkId",
+        ]
+      }
+      g002 = {
+        active                              = true
+        embedding_profile_alias             = "titan-v2"
+        embedding_profile_revision          = "rev-002"
+        embedding_dimensions                = 1024
+        vector_distance_metric              = "cosine"
+        vector_encryption_revision           = "enc-v1"
+        vector_non_filterable_metadata_keys = [
+          "checksum",
+          "chunkId",
+        ]
+      }
+    }
   }
 
   assert {
-    condition     = aws_s3vectors_index.documents.index_name != run.secure_aws_managed_defaults.vector_index_name
-    error_message = "A new embedding revision and generation must produce a distinct vector index name."
+    condition     = length(aws_s3vectors_index.documents) == 2
+    error_message = "The old and new vector index generations must coexist during migration."
+  }
+
+  assert {
+    condition     = aws_s3vectors_index.documents["g001"].index_name != aws_s3vectors_index.documents["g002"].index_name
+    error_message = "Each retained generation must have a distinct immutable index name."
+  }
+
+  assert {
+    condition     = output.vector_index_generation == "g002" && output.vector_index_name == aws_s3vectors_index.documents["g002"].index_name
+    error_message = "Application outputs must select only the active generation while retaining the previous index."
   }
 }
