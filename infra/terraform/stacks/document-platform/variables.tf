@@ -77,7 +77,7 @@ variable "encryption" {
       for contract in values(merge(
         { compatibility = var.encryption.compatibility_default },
         try(var.encryption.capability_overrides, {}),
-      )) : (
+        )) : (
         contains(["AES256", "aws:kms"], contract.mode) &&
         contract.deletion_window_days >= 7 &&
         contract.deletion_window_days <= 30 &&
@@ -88,7 +88,7 @@ variable "encryption" {
             (
               contract.create_customer_key &&
               try(contract.existing_key_arn, null) == null
-            ) || (
+              ) || (
               !contract.create_customer_key &&
               try(contract.existing_key_arn, null) != null &&
               can(regex("^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[A-Za-z0-9-]+$", contract.existing_key_arn))
