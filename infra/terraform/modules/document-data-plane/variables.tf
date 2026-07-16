@@ -185,7 +185,7 @@ variable "vector_index_generations" {
     embedding_profile_revision          = string
     embedding_dimensions                = number
     vector_distance_metric              = string
-    vector_encryption_revision           = string
+    vector_encryption_revision          = string
     vector_non_filterable_metadata_keys = set(string)
   }))
 
