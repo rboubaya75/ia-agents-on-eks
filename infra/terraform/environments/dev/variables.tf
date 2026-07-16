@@ -51,38 +51,17 @@ variable "heartbeat_interval_seconds" {
   default     = 60
 }
 
-variable "embedding_profile_alias" {
-  description = "Server-controlled embedding profile alias."
-  type        = string
-}
-
-variable "embedding_profile_revision" {
-  description = "Immutable embedding profile revision."
-  type        = string
-}
-
-variable "embedding_dimensions" {
-  description = "Embedding vector dimension."
-  type        = number
-  default     = 1024
-}
-
-variable "vector_distance_metric" {
-  description = "S3 Vectors distance metric."
-  type        = string
-  default     = "cosine"
-}
-
-variable "vector_index_generation" {
-  description = "Explicit immutable vector index generation."
-  type        = string
-  default     = "g001"
-}
-
-variable "vector_encryption_revision" {
-  description = "Immutable vector encryption contract revision."
-  type        = string
-  default     = "enc-v1"
+variable "vector_index_generations" {
+  description = "Retained immutable S3 Vectors generations; exactly one must be active."
+  type = map(object({
+    active                              = bool
+    embedding_profile_alias             = string
+    embedding_profile_revision          = string
+    embedding_dimensions                = number
+    vector_distance_metric              = string
+    vector_encryption_revision           = string
+    vector_non_filterable_metadata_keys = set(string)
+  }))
 }
 
 variable "encryption_mode" {
