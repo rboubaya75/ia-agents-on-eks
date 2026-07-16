@@ -43,8 +43,26 @@ jobs:
           terraform_version: 1.15.8
           terraform_wrapper: false
 
-      - name: Terraform format
-        run: terraform fmt -check -recursive infra/terraform
+      - name: Capture canonical Terraform formatting
+        id: terraform_format
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform fmt -recursive infra/terraform
+          git diff -- infra/terraform
+
+      - name: Upload canonically formatted Terraform
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canonical-terraform-format
+          path: infra/terraform
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Fail when formatting changed files
+        shell: bash
+        run: git diff --exit-code -- infra/terraform
 
       - name: Initialize module
         working-directory: infra/terraform/modules/document-data-plane
