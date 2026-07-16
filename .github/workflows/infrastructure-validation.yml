@@ -94,6 +94,10 @@ jobs:
             grep -q --fixed-strings "prevent_destroy = true" "${module}/${file}"
           done
 
+          grep -q --fixed-strings "noncurrent_version_expiration" "${module}/s3.tf"
+          grep -q --fixed-strings "!startswith(local.chunk_prefix, local.temporary_upload_prefix)" "${module}/s3.tf"
+          grep -q --fixed-strings "for_each = local.vector_index_definitions" "${module}/s3vectors.tf"
+          grep -q --fixed-strings "retained_vector_index_contracts" "${module}/vector_migration_variables.tf"
           grep -q --fixed-strings 'redrive_policy = jsonencode({' "${module}/sqs.tf"
           grep -q --fixed-strings 'resource "aws_sqs_queue_redrive_allow_policy"' "${module}/sqs.tf"
 
