@@ -2,9 +2,9 @@
 
 ## Status
 
-Implemented on `feature/phase-4b-document-data-plane` for review. This increment creates deployable Terraform definitions but does not plan or apply them against an AWS account.
+Implemented on `feature/phase-4b-document-data-plane-v2` for review in PR #9. This pull request replaces the unmerged PR #8 after its technical review identified lifecycle, vector-migration and configuration-boundary defects.
 
-ADR-0011 remains the governing architecture decision. This implementation does not change the accepted boundaries: workload IAM, EKS Pod Identity, Helm, deployment OIDC and real AWS integration remain later phases.
+This increment creates deployable Terraform definitions but does not plan or apply them against an AWS account. ADR-0011 remains the governing accepted decision. Workload IAM, EKS Pod Identity, Helm, deployment OIDC and real AWS integration remain later phases.
 
 ## Delivered layout
 
@@ -65,13 +65,20 @@ The document bucket is:
 - restricted to TLS requests;
 - configured to reject uploads that omit or contradict the selected encryption contract.
 
-The temporary lifecycle rule applies only to:
+Temporary lifecycle controls apply only to:
 
 ```text
 <document_source_prefix>/uploads/
 ```
 
-It expires temporary uploads after exactly one day, matching the application readiness check. It does not expire immutable sources or active chunk generations. Incomplete multipart uploads are aborted independently.
+Because the bucket is versioned, temporary cleanup covers the complete object history:
+
+- current versions expire after exactly one day, matching the application readiness check;
+- noncurrent versions expire after exactly one day;
+- expired delete markers are removed;
+- incomplete multipart uploads are aborted independently.
+
+The module rejects a `document_index_prefix` equal to or below the temporary-upload prefix. Chunks and vector-key manifests therefore cannot inherit the temporary lifecycle. Immutable sources and active chunk generations have no automatic expiration rule.
 
 ### FIFO ingestion queue
 
@@ -90,24 +97,27 @@ Terraform rejects unsafe worker timing when:
 - heartbeat is greater than half the visibility timeout;
 - DLQ retention is shorter than source-queue retention.
 
-The application continues to supply the deterministic message group and deduplication identifiers; content-based deduplication remains disabled.
+The application continues to supply deterministic message-group and deduplication identifiers; content-based deduplication remains disabled.
 
 ### S3 Vectors
 
-The vector bucket and index use native AWS provider resources. Both are protected from routine destruction.
+The vector bucket and all retained indexes use native AWS provider resources and are protected from routine destruction.
 
-The index name deterministically represents an immutable contract containing:
+`vector_index_generations` is a map keyed by immutable generation identifiers such as `g001` and `g002`. Every generation defines:
 
+- active or retained status;
 - embedding profile alias;
 - embedding profile revision;
 - vector dimension;
 - distance metric;
-- explicit index generation;
-- encryption mode and encryption revision.
+- vector-encryption contract revision;
+- non-filterable metadata keys.
 
-Changing that contract produces a distinct index name. It does not mutate or replace the active index in place.
+Exactly one generation must be active. Each map entry creates a distinct `aws_s3vectors_index` through `for_each`. A migration can therefore retain `g001` while creating and selecting `g002` in the same plan. Terraform does not replace the active index in place.
 
-The metadata keys required for tenant and authorization filtering remain filterable:
+Application outputs select only the active generation. The `vector_indexes` output exposes every retained generation for re-indexing, verification and later retirement. Removing an old generation remains blocked by `prevent_destroy` until a separate reviewed retirement change explicitly alters that protection.
+
+The metadata keys required for tenant and authorization filtering remain filterable in every generation:
 
 ```text
 tenantId
@@ -116,7 +126,7 @@ allowedRoles
 generationId
 ```
 
-Terraform rejects configurations that mark one of those keys as non-filterable.
+Terraform rejects configurations that mark one of those keys as non-filterable or that declare zero or multiple active generations.
 
 ### KMS
 
@@ -129,9 +139,9 @@ A module-managed key enables rotation and uses `prevent_destroy`. Phase 4C will 
 
 ## Naming and AWS identifiers
 
-No account ID, ARN, region or resource name is hardcoded.
+No account ID, ARN, region, state key or real resource name is hardcoded.
 
-Global names are derived from typed inputs plus the trusted current AWS account identity and configured region. The committed examples contain placeholders only. The reusable module rejects fixed AWS ARNs through the infrastructure validation workflow.
+Global names are derived from typed inputs plus the trusted current AWS account identity and configured region. The committed backend and environment examples contain placeholders for bucket, state key, regions, role and environment-owned values. The reusable module rejects fixed AWS ARNs through the infrastructure validation workflow.
 
 ## Application output mapping
 
@@ -143,8 +153,10 @@ The module exposes individual resource outputs and an `application_runtime_setti
 - maximum source size;
 - KMS key identifier when applicable;
 - ingestion queue URL and timing values;
-- S3 Vectors bucket and immutable index;
-- embedding profile alias, revision and dimensions.
+- S3 Vectors bucket and active immutable index;
+- active embedding profile alias, revision and dimensions.
+
+A separate `vector_indexes` output exposes all retained generations without changing the application runtime contract.
 
 Feature activation, the resolved Bedrock model ID and pipeline version remain deployment inputs. They are not owned by this data-plane module.
 
@@ -153,12 +165,13 @@ Feature activation, the resolved Bedrock model ID and pipeline version remain de
 `infra/terraform/environments/dev/` composes the reusable module with:
 
 - a partial S3 backend;
-- an AWS provider configured from an input region;
+- an AWS provider configured from an injected region;
 - example backend and environment values containing placeholders only;
 - a committed provider lock file;
-- outputs intended for Phase 4C workload identity and Helm.
+- active and retained vector-index outputs intended for later migration operations;
+- runtime outputs intended for Phase 4C workload identity and Helm.
 
-The remote-state bucket, state role and real environment values are prerequisites. They are not created or committed in this increment.
+The remote-state bucket, state key, state region, state role and real environment values are prerequisites. They are not created or fixed in this increment.
 
 ## Automated validation
 
@@ -174,21 +187,35 @@ terraform test
 dev init without backend and with lockfile=readonly
 dev validate
 provider-lock integrity check
-static destruction, redrive and hardcoded-ARN guardrails
+static destruction, lifecycle, vector-generation, redrive and hardcoded-ARN guardrails
 ```
 
 The Terraform test suite covers:
 
 - the DynamoDB `pk`/`sk` schema and on-demand mode;
 - deletion protection;
-- S3 public blocking, versioning and exact temporary lifecycle;
+- S3 public blocking and versioning;
+- current and noncurrent temporary-upload expiration;
+- expired delete-marker cleanup;
+- rejection of a chunk prefix beneath the temporary-upload prefix;
 - FIFO queue and DLQ selection;
-- vector dimensions, metric, generation and destruction controls;
 - the customer-managed KMS path;
 - rejection of incomplete KMS configuration;
 - rejection of unsafe SQS/lease timing;
 - rejection of non-filterable authorization metadata;
-- creation of a distinct vector index for a new embedding revision and generation.
+- rejection of multiple active vector generations;
+- coexistence of a retained previous index and a new active index;
+- active-only application runtime outputs.
+
+## Review remediation
+
+The replacement PR resolves all findings from the PR #8 review:
+
+1. versioned temporary objects are removed through current, noncurrent and delete-marker lifecycle controls;
+2. vector migrations use multiple concurrent Terraform resources rather than replacing one protected singleton;
+3. cross-prefix validation prevents chunks from inheriting the temporary lifecycle;
+4. the backend state key is externally injected;
+5. the environment region example is a placeholder rather than a fixed deployment choice.
 
 ## Deferred work
 
@@ -202,4 +229,4 @@ This increment intentionally does not implement:
 - AWS deployment or integration testing;
 - frontend, durable deletion, retrieval or custom agents.
 
-Those items remain subject to their existing phase gates. Phase 4C must not start until this Phase 4B pull request is approved and merged.
+Those items remain subject to their existing phase gates. Phase 4C must not start until this Phase 4B replacement pull request is approved and merged.
