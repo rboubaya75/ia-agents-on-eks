@@ -1,0 +1,8 @@
+bucket       = "REPLACE_WITH_REMOTE_STATE_BUCKET"
+key          = "ia-agents-on-eks/dev/document-data-plane.tfstate"
+region       = "REPLACE_WITH_STATE_BUCKET_REGION"
+encrypt      = true
+use_lockfile = true
+
+# role_arn is injected by the protected GitHub environment or local operator.
+# No AWS account ID or role ARN is committed in this repository.
