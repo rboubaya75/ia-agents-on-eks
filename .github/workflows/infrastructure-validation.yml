@@ -39,12 +39,8 @@ jobs:
           terraform_version: 1.15.8
           terraform_wrapper: false
 
-      - name: Produce canonical Terraform formatting
-        shell: bash
-        run: |
-          set -euo pipefail
-          terraform fmt -recursive infra/terraform
-          git diff -- infra/terraform > terraform-format.patch
+      - name: Terraform format
+        run: terraform fmt -check -recursive infra/terraform
 
       - name: Initialize module
         working-directory: infra/terraform/modules/document-data-plane
@@ -64,14 +60,13 @@ jobs:
 
       - name: Initialize development composition
         working-directory: infra/terraform/environments/dev
-        run: terraform init -backend=false -input=false
+        run: terraform init -backend=false -input=false -lockfile=readonly
 
       - name: Validate development composition
         working-directory: infra/terraform/environments/dev
         run: terraform validate
 
       - name: Verify committed provider lock
-        id: provider_lock
         shell: bash
         run: |
           set -euo pipefail
@@ -111,17 +106,3 @@ jobs:
           path: infra/terraform/modules/document-data-plane/terraform-test.log
           if-no-files-found: error
           retention-days: 7
-
-      - name: Upload canonical Terraform sources and provider lock
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: terraform-canonical-sources
-          path: |
-            terraform-format.patch
-            infra/terraform/**/*.tf
-            infra/terraform/**/*.tftest.hcl
-            infra/terraform/environments/dev/.terraform.lock.hcl
-          if-no-files-found: error
-          include-hidden-files: true
-          retention-days: 1
