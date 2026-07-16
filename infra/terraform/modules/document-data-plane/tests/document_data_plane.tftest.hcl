@@ -152,7 +152,7 @@ run "new_embedding_revision_creates_distinct_index_name" {
 
   variables {
     embedding_profile_revision = "rev-002"
-    vector_index_generation     = "g002"
+    vector_index_generation    = "g002"
   }
 
   assert {
