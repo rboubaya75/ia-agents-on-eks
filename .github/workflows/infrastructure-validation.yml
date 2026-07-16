@@ -50,7 +50,22 @@ jobs:
           terraform_wrapper: false
 
       - name: Terraform format
-        run: terraform fmt -check -recursive infra/terraform
+        id: terraform_format
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform fmt -recursive infra/terraform
+          git diff --binary -- infra/terraform > terraform-format.patch
+          test ! -s terraform-format.patch
+
+      - name: Upload Terraform format patch
+        if: failure() && steps.terraform_format.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: terraform-format-patch
+          path: terraform-format.patch
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Initialize and validate reusable configurations
         shell: bash
