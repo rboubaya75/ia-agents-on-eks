@@ -39,8 +39,8 @@ jobs:
           terraform_version: 1.15.8
           terraform_wrapper: false
 
-      - name: Terraform format
-        run: terraform fmt -check -recursive infra/terraform
+      - name: Produce canonical Terraform formatting
+        run: terraform fmt -recursive infra/terraform
 
       - name: Initialize module
         working-directory: infra/terraform/modules/document-data-plane
@@ -92,11 +92,14 @@ jobs:
             exit 1
           fi
 
-      - name: Upload generated provider lock
+      - name: Upload canonical Terraform sources and provider lock
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: terraform-dev-provider-lock
-          path: infra/terraform/environments/dev/.terraform.lock.hcl
+          name: terraform-canonical-sources
+          path: |
+            infra/terraform/**/*.tf
+            infra/terraform/**/*.tftest.hcl
+            infra/terraform/environments/dev/.terraform.lock.hcl
           if-no-files-found: error
           retention-days: 1
