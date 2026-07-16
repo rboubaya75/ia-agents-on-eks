@@ -31,6 +31,7 @@ Terraform will use three explicit layers.
 ```text
 infra/terraform/
 ├── modules/
+│   ├── document-encryption/
 │   ├── document-storage/
 │   ├── document-coordination/
 │   ├── ingestion-messaging/
@@ -51,6 +52,7 @@ The layers have different responsibilities.
 
 A capability module owns one cohesive operational capability and its directly coupled resources.
 
+- `document-encryption` owns the optional customer-managed KMS key, alias and stable encryption output contract shared by document capabilities.
 - `document-storage` owns the document S3 bucket, versioning, encryption contract and lifecycle rules.
 - `document-coordination` owns the DynamoDB control table and its durability controls.
 - `ingestion-messaging` owns the FIFO ingestion queue, FIFO dead-letter queue and redrive controls.
@@ -66,10 +68,10 @@ Modules remain intentionally coarse enough to preserve invariants. The design do
 
 `stacks/document-platform` composes the capability modules and wires their outputs to dependent inputs. It is the authoritative location for cross-capability contracts such as:
 
+- shared encryption configuration consumed by durable services;
 - storage prefixes consumed by IAM;
 - queue identifiers consumed by IAM and observability;
 - vector-store identifiers consumed by IAM and runtime configuration;
-- shared encryption decisions;
 - application runtime outputs;
 - feature-level validation across multiple modules.
 
