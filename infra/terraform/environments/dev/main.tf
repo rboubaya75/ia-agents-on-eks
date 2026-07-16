@@ -14,12 +14,7 @@ module "document_data_plane" {
   ingestion_lease_ttl_seconds      = var.ingestion_lease_ttl_seconds
   heartbeat_interval_seconds       = var.heartbeat_interval_seconds
 
-  embedding_profile_alias    = var.embedding_profile_alias
-  embedding_profile_revision = var.embedding_profile_revision
-  embedding_dimensions       = var.embedding_dimensions
-  vector_distance_metric     = var.vector_distance_metric
-  vector_index_generation    = var.vector_index_generation
-  vector_encryption_revision = var.vector_encryption_revision
+  vector_index_generations = var.vector_index_generations
 
   encryption_mode = var.encryption_mode
   create_kms_key  = var.create_kms_key
