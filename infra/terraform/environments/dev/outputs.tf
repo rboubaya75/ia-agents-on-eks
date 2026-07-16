@@ -11,6 +11,8 @@ output "document_data_plane" {
     ingestion_dlq_arn           = module.document_data_plane.ingestion_dlq_arn
     vector_bucket_name          = module.document_data_plane.vector_bucket_name
     vector_bucket_arn           = module.document_data_plane.vector_bucket_arn
+    vector_indexes              = module.document_data_plane.vector_indexes
+    active_vector_generation    = module.document_data_plane.vector_index_generation
     vector_index_name           = module.document_data_plane.vector_index_name
     vector_index_arn            = module.document_data_plane.vector_index_arn
     document_kms_key_arn        = module.document_data_plane.document_kms_key_arn
