@@ -69,12 +69,23 @@ resource "aws_s3_bucket_lifecycle_configuration" "documents" {
       days = var.temporary_upload_expiration_days
     }
 
+    noncurrent_version_expiration {
+      noncurrent_days = var.temporary_upload_expiration_days
+    }
+
     abort_incomplete_multipart_upload {
       days_after_initiation = var.abort_incomplete_multipart_upload_days
     }
   }
 
   depends_on = [aws_s3_bucket_versioning.documents]
+
+  lifecycle {
+    precondition {
+      condition     = !startswith(local.chunk_prefix, local.temporary_upload_prefix)
+      error_message = "document_index_prefix must not equal or descend from the temporary upload prefix."
+    }
+  }
 }
 
 resource "aws_s3_bucket_policy" "documents" {
