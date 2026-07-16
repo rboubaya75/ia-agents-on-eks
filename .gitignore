@@ -14,3 +14,14 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+
+# Terraform generated files. Environment provider lock files remain tracked.
+**/.terraform/*
+infra/terraform/modules/**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfplan
+*.tfvars
+!*.tfvars.example
