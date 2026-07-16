@@ -139,10 +139,26 @@ jobs:
             exit 1
           fi
 
-          grep -q --fixed-strings "prevent_destroy = true" "${legacy}/kms.tf"
-          grep -q --fixed-strings "prevent_destroy = true" "${legacy}/s3.tf"
+          for file in dynamodb.tf kms.tf s3.tf s3vectors.tf; do
+            grep -q --fixed-strings "prevent_destroy = true" "${legacy}/${file}"
+          done
+
+          grep -q --fixed-strings "noncurrent_version_expiration" "${legacy}/s3.tf"
+          grep -q --fixed-strings "!startswith(local.chunk_prefix, local.temporary_upload_prefix)" "${legacy}/s3.tf"
+          grep -q --fixed-strings "for_each = local.vector_index_definitions" "${legacy}/s3vectors.tf"
+          grep -q --fixed-strings "retained_vector_index_contracts" "${legacy}/vector_migration_variables.tf"
+          grep -q --fixed-strings 'redrive_policy = jsonencode({' "${legacy}/sqs.tf"
+          grep -q --fixed-strings 'resource "aws_sqs_queue_redrive_allow_policy"' "${legacy}/sqs.tf"
+
+          if grep -R --line-number -E 'arn:(aws|aws-us-gov|aws-cn):' "${legacy}" --include='*.tf'; then
+            echo "Committed AWS ARNs are forbidden in the legacy reusable module" >&2
+            exit 1
+          fi
+
           grep -q --fixed-strings "prevent_destroy = true" "${encryption}/main.tf"
           grep -q --fixed-strings "prevent_destroy = true" "${storage}/main.tf"
+          grep -q --fixed-strings "noncurrent_version_expiration" "${storage}/main.tf"
+          grep -q --fixed-strings "!startswith(local.chunk_prefix, local.temporary_upload_prefix)" "${storage}/main.tf"
 
           for root in "${encryption}" "${storage}" "${stack}"; do
             if grep -R --line-number --include='*.tf' -E '^[[:space:]]*provider[[:space:]]+"' "${root}" --exclude-dir=examples; then
