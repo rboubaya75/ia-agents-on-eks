@@ -68,13 +68,24 @@ variable "document_max_source_bytes" {
 }
 
 variable "temporary_upload_expiration_days" {
-  description = "Retention of temporary uploads. The application readiness contract requires exactly one day."
+  description = "Retention of current temporary-upload versions. The application readiness contract requires exactly one day."
   type        = number
   default     = 1
 
   validation {
     condition     = var.temporary_upload_expiration_days == 1
     error_message = "temporary_upload_expiration_days must remain exactly 1 to satisfy the application readiness contract."
+  }
+}
+
+variable "temporary_upload_noncurrent_expiration_days" {
+  description = "Retention of noncurrent temporary-upload versions in the versioned document bucket."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.temporary_upload_noncurrent_expiration_days == 1
+    error_message = "temporary_upload_noncurrent_expiration_days must remain exactly 1 so temporary object content is removed from the versioned bucket."
   }
 }
 
@@ -166,85 +177,65 @@ variable "receive_wait_time_seconds" {
   }
 }
 
-variable "embedding_profile_alias" {
-  description = "Server-controlled embedding profile alias included in the immutable vector-index contract."
-  type        = string
+variable "vector_index_generations" {
+  description = "Retained immutable S3 Vectors index generations. Exactly one generation must be active."
+  type = map(object({
+    active                              = bool
+    embedding_profile_alias             = string
+    embedding_profile_revision          = string
+    embedding_dimensions                = number
+    vector_distance_metric              = string
+    vector_encryption_revision           = string
+    vector_non_filterable_metadata_keys = set(string)
+  }))
 
   validation {
-    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", var.embedding_profile_alias))
-    error_message = "embedding_profile_alias must contain 1 to 64 safe characters."
+    condition     = length(var.vector_index_generations) >= 1
+    error_message = "vector_index_generations must declare at least one retained index generation."
   }
-}
-
-variable "embedding_profile_revision" {
-  description = "Immutable embedding profile revision."
-  type        = string
 
   validation {
-    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", var.embedding_profile_revision))
-    error_message = "embedding_profile_revision must contain 1 to 64 safe characters."
+    condition     = alltrue([for generation in keys(var.vector_index_generations) : can(regex("^g[0-9]{3,6}$", generation))])
+    error_message = "Each vector index generation key must use the form g001 through g999999."
   }
-}
-
-variable "embedding_dimensions" {
-  description = "Vector dimension expected from the configured embedding profile."
-  type        = number
-  default     = 1024
 
   validation {
-    condition     = var.embedding_dimensions >= 1 && var.embedding_dimensions <= 4096
-    error_message = "embedding_dimensions must be between 1 and 4,096."
+    condition     = length([for generation, config in var.vector_index_generations : generation if config.active]) == 1
+    error_message = "Exactly one vector index generation must set active = true."
   }
-}
-
-variable "vector_distance_metric" {
-  description = "Distance metric for the immutable S3 Vectors index generation."
-  type        = string
-  default     = "cosine"
 
   validation {
-    condition     = contains(["cosine", "euclidean"], var.vector_distance_metric)
-    error_message = "vector_distance_metric must be cosine or euclidean."
+    condition = alltrue([
+      for config in values(var.vector_index_generations) :
+      can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", config.embedding_profile_alias)) &&
+      can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$", config.embedding_profile_revision)) &&
+      config.embedding_dimensions >= 1 &&
+      config.embedding_dimensions <= 4096 &&
+      contains(["cosine", "euclidean"], config.vector_distance_metric) &&
+      can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$", config.vector_encryption_revision))
+    ])
+    error_message = "Each vector generation must define a valid embedding alias, immutable revision, dimension, distance metric and encryption revision."
   }
-}
-
-variable "vector_index_generation" {
-  description = "Explicit immutable vector-index generation identifier."
-  type        = string
-  default     = "g001"
 
   validation {
-    condition     = can(regex("^g[0-9]{3,6}$", var.vector_index_generation))
-    error_message = "vector_index_generation must use the form g001 through g999999."
-  }
-}
-
-variable "vector_encryption_revision" {
-  description = "Immutable identifier for the vector encryption contract. Increment it before replacing the vector encryption key or mode."
-  type        = string
-  default     = "enc-v1"
-
-  validation {
-    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$", var.vector_encryption_revision))
-    error_message = "vector_encryption_revision must contain 1 to 32 safe characters."
-  }
-}
-
-variable "vector_non_filterable_metadata_keys" {
-  description = "S3 Vectors metadata keys stored but excluded from filtering."
-  type        = set(string)
-  default = [
-    "checksum",
-    "chunkId",
-    "embeddingDimensions",
-    "embeddingModelId",
-    "pipelineVersion",
-    "sourceVersion",
-  ]
-
-  validation {
-    condition     = alltrue([for key in var.vector_non_filterable_metadata_keys : can(regex("^[A-Za-z][A-Za-z0-9]{0,62}$", key))])
+    condition = alltrue(flatten([
+      for config in values(var.vector_index_generations) : [
+        for key in config.vector_non_filterable_metadata_keys :
+        can(regex("^[A-Za-z][A-Za-z0-9]{0,62}$", key))
+      ]
+    ]))
     error_message = "Each non-filterable metadata key must contain 1 to 63 alphanumeric characters and start with a letter."
+  }
+
+  validation {
+    condition = alltrue([
+      for config in values(var.vector_index_generations) :
+      length(setintersection(
+        config.vector_non_filterable_metadata_keys,
+        toset(["allowedRoles", "classification", "generationId", "tenantId"]),
+      )) == 0
+    ])
+    error_message = "tenantId, classification, allowedRoles and generationId must remain filterable in every vector index generation."
   }
 }
 
