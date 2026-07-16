@@ -104,32 +104,46 @@ output "vector_bucket_arn" {
 }
 
 output "vector_index_name" {
-  description = "Immutable S3 Vectors index generation consumed by IA_VECTOR_INDEX_NAME."
-  value       = aws_s3vectors_index.documents.index_name
+  description = "Active immutable S3 Vectors index generation consumed by IA_VECTOR_INDEX_NAME."
+  value       = aws_s3vectors_index.documents[var.vector_index_generation].index_name
 }
 
 output "vector_index_arn" {
-  description = "Immutable S3 Vectors index ARN for Phase 4C workload policies."
-  value       = aws_s3vectors_index.documents.index_arn
+  description = "Active immutable S3 Vectors index ARN for Phase 4C workload policies."
+  value       = aws_s3vectors_index.documents[var.vector_index_generation].index_arn
+}
+
+output "vector_index_names" {
+  description = "All active and retained immutable S3 Vectors index names keyed by generation."
+  value = {
+    for generation, index in aws_s3vectors_index.documents : generation => index.index_name
+  }
+}
+
+output "vector_index_arns" {
+  description = "All active and retained immutable S3 Vectors index ARNs keyed by generation."
+  value = {
+    for generation, index in aws_s3vectors_index.documents : generation => index.index_arn
+  }
 }
 
 output "vector_index_generation" {
-  description = "Explicit immutable index generation identifier."
+  description = "Explicit active immutable index generation identifier."
   value       = var.vector_index_generation
 }
 
 output "embedding_profile_alias" {
-  description = "Server-controlled embedding profile alias."
+  description = "Server-controlled embedding profile alias for the active index."
   value       = var.embedding_profile_alias
 }
 
 output "embedding_profile_revision" {
-  description = "Immutable embedding profile revision."
+  description = "Immutable embedding profile revision for the active index."
   value       = var.embedding_profile_revision
 }
 
 output "embedding_dimensions" {
-  description = "Embedding vector dimension consumed by IA_EMBEDDING_DIMENSIONS."
+  description = "Active embedding vector dimension consumed by IA_EMBEDDING_DIMENSIONS."
   value       = var.embedding_dimensions
 }
 
@@ -148,7 +162,7 @@ output "application_runtime_settings" {
     IA_DOCUMENT_INGESTION_LEASE_TTL_SECONDS          = tostring(var.ingestion_lease_ttl_seconds)
     IA_DOCUMENT_INGESTION_HEARTBEAT_INTERVAL_SECONDS = tostring(var.heartbeat_interval_seconds)
     IA_VECTOR_BUCKET_NAME                            = aws_s3vectors_vector_bucket.documents.vector_bucket_name
-    IA_VECTOR_INDEX_NAME                             = aws_s3vectors_index.documents.index_name
+    IA_VECTOR_INDEX_NAME                             = aws_s3vectors_index.documents[var.vector_index_generation].index_name
     IA_EMBEDDING_PROFILE_ALIAS                       = var.embedding_profile_alias
     IA_EMBEDDING_PROFILE_REVISION                    = var.embedding_profile_revision
     IA_EMBEDDING_DIMENSIONS                          = tostring(var.embedding_dimensions)
