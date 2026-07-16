@@ -4,20 +4,39 @@ This module provisions only the durable AWS resources required by the merged doc
 
 - one DynamoDB control table using the application `pk` and `sk` key schema;
 - one private, versioned and encrypted S3 bucket;
-- the exact one-day lifecycle rule required for `<document_source_prefix>/uploads/`;
+- complete temporary-upload lifecycle controls for `<document_source_prefix>/uploads/`;
 - one encrypted FIFO ingestion queue and one encrypted FIFO DLQ;
-- one protected S3 Vectors bucket and one immutable index generation;
+- one protected S3 Vectors bucket and one or more retained immutable index generations;
 - an optional customer-managed KMS key.
 
 It does not create EKS, networking, Cognito, workload IAM roles, Pod Identity associations, Helm resources or GitHub deployment roles.
 
+## Temporary-upload lifecycle
+
+The versioned document bucket removes temporary content through three coordinated controls scoped only to the complete upload prefix:
+
+- current versions expire after exactly one day;
+- noncurrent versions expire after exactly one day;
+- expired delete markers are removed;
+- incomplete multipart uploads are aborted independently.
+
+The module rejects a `document_index_prefix` equal to or below the temporary-upload prefix, preventing chunks and vector manifests from inheriting the temporary lifecycle.
+
+## Vector index generations
+
+`vector_index_generations` is a map keyed by immutable generation identifiers such as `g001` and `g002`. Exactly one generation must set `active = true`.
+
+A migration declares the current generation as retained and inactive while adding the next active generation. Terraform therefore manages both index resources concurrently. Application outputs select only the active index; the `vector_indexes` output exposes all retained generations for migration, verification and later retirement.
+
+Every vector index uses `prevent_destroy`. Removing a retained generation is a separate reviewed retirement operation and cannot happen implicitly during a model, dimension, metric or metadata-contract change.
+
 ## Destruction boundary
 
-The document bucket, DynamoDB table, module-managed KMS key, vector bucket and vector index use `prevent_destroy`. Retiring one of these resources is a separate reviewed operation. A vector contract change must create a new `vector_index_generation`; it must not replace the active index in place.
+The document bucket, DynamoDB table, module-managed KMS key, vector bucket and every vector index use `prevent_destroy`. Retiring one of these resources is a separate reviewed operation.
 
 ## Application contract
 
-The `application_runtime_settings` output provides the authoritative non-secret settings required by the backend. `IA_DOCUMENT_API_ENABLED`, `IA_EMBEDDING_MODEL_ID` and `IA_DOCUMENT_PIPELINE_VERSION` remain deployment inputs because this module does not own feature activation or model resolution.
+The `application_runtime_settings` output provides the authoritative non-secret settings required by the backend and selects only the active vector index generation. `IA_DOCUMENT_API_ENABLED`, `IA_EMBEDDING_MODEL_ID` and `IA_DOCUMENT_PIPELINE_VERSION` remain deployment inputs because this module does not own feature activation or model resolution.
 
 ## Encryption
 
