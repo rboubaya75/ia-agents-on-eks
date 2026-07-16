@@ -1,7 +1,8 @@
 # ADR-0012: Terraform industrialization model
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-16
+- Accepted after review and merge of PR #11
 
 ## Context
 

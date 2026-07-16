@@ -1,0 +1,79 @@
+name: phase-4c0b1-contract-validation
+
+on:
+  pull_request:
+    paths:
+      - "infra/terraform/modules/document-encryption/**"
+      - "infra/terraform/modules/document-storage/**"
+      - "infra/terraform/stacks/document-platform/**"
+      - "docs/adr/0012-terraform-industrialization-model.md"
+      - "docs/architecture/phase-4c0-terraform-industrialization-plan.md"
+      - "docs/architecture/phase-4c0b1-encryption-storage.md"
+      - ".github/workflows/phase-4c0b1-contract-validation.yml"
+  push:
+    branches:
+      - main
+      - "feature/**"
+    paths:
+      - "infra/terraform/modules/document-encryption/**"
+      - "infra/terraform/modules/document-storage/**"
+      - "infra/terraform/stacks/document-platform/**"
+      - "docs/adr/0012-terraform-industrialization-model.md"
+      - "docs/architecture/phase-4c0-terraform-industrialization-plan.md"
+      - "docs/architecture/phase-4c0b1-encryption-storage.md"
+      - ".github/workflows/phase-4c0b1-contract-validation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  contract-guardrails:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Verify accepted architecture and migration contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          adr="docs/adr/0012-terraform-industrialization-model.md"
+          plan="docs/architecture/phase-4c0-terraform-industrialization-plan.md"
+          stack="infra/terraform/stacks/document-platform"
+          encryption="infra/terraform/modules/document-encryption"
+          storage="infra/terraform/modules/document-storage"
+          storage_tests="${storage}/tests/document_storage.tftest.hcl"
+
+          grep -q --fixed-strings -- "- Status: Accepted" "${adr}"
+          grep -q --fixed-strings "Accepted after review and merge of PR #11" "${adr}"
+          grep -q --fixed-strings "ADR-0012 \`Accepted\`" "${plan}"
+          if grep -q --fixed-strings 'ADR-0012 remains `Proposed`' "${plan}"; then
+            echo "The migration plan must not contradict the accepted ADR status" >&2
+            exit 1
+          fi
+
+          compatibility_module="$(sed -n '/^module "encryption" {/,/^}/p' "${stack}/main.tf")"
+          if grep -q --fixed-strings "for_each" <<<"${compatibility_module}"; then
+            echo "The compatibility encryption module must remain a singleton for the approved migration address" >&2
+            exit 1
+          fi
+
+          grep -q --fixed-strings 'module "capability_encryption"' "${stack}/main.tf"
+          grep -q --fixed-strings 'for_each = local.capability_encryption_contracts' "${stack}/main.tf"
+          grep -q --fixed-strings 'reserved_tag_keys' "${stack}/context.tf"
+          grep -q --fixed-strings 'must not redefine mandatory platform tag keys' "${stack}/variables.tf"
+
+          for versions_file in "${encryption}/versions.tf" "${storage}/versions.tf" "${stack}/versions.tf"; do
+            grep -q --fixed-strings 'version = ">= 6.55.0, < 7.0.0"' "${versions_file}"
+          done
+
+          grep -q --fixed-strings 'alias/iaagents-dev-document-data' "${stack}/tests/compatibility_kms.tftest.hcl"
+          grep -q --fixed-strings 'expect_failures = [var.context]' "${stack}/tests/mandatory_tags.tftest.hcl"
+
+          for sid in DenyInsecureTransport DenyMissingEncryptionHeader DenyIncorrectEncryptionMode DenyIncorrectKmsKey; do
+            grep -q --fixed-strings "${sid}" "${storage_tests}"
+          done
+
+          grep -q --fixed-strings 'jsondecode(aws_s3_bucket_policy.this.policy)' "${storage_tests}"
