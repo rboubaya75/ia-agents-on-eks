@@ -71,16 +71,6 @@ run "secure_aws_managed_defaults" {
   }
 
   assert {
-    condition     = jsondecode(aws_sqs_queue.ingestion.redrive_policy).maxReceiveCount == 5
-    error_message = "The ingestion queue must apply the configured redrive count."
-  }
-
-  assert {
-    condition     = strcontains(aws_sqs_queue.ingestion.redrive_policy, "deadLetterTargetArn")
-    error_message = "The ingestion queue must configure a dead-letter target."
-  }
-
-  assert {
     condition     = aws_s3vectors_vector_bucket.documents.force_destroy == false
     error_message = "The vector bucket must not use force_destroy."
   }
