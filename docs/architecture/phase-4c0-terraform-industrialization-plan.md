@@ -1,5 +1,12 @@
 # Phase 4C-0 — Terraform industrialization migration plan
 
+## Status
+
+- Architecture decision: ADR-0012 `Accepted` through PR #11 on 2026-07-16.
+- Migration plan: approved through PR #11 on 2026-07-16.
+- Current implementation gate: 4C-0B1 only.
+- Live ownership cutover: forbidden before 4C-0B3.
+
 ## Objective
 
 Refactor the Phase 4B Terraform into reusable capability modules, a document-platform stack and small live environment roots before adding Phase 4C workload identity or Kubernetes resources.
@@ -8,9 +15,9 @@ This sub-lot changes architecture and repository structure only. It must not bro
 
 ## Phase gate
 
-This plan implements the architecture proposed by ADR-0012. ADR-0012 remains `Proposed` until review approval.
+ADR-0012 and this migration plan were reviewed and approved through PR #11 on 2026-07-16.
 
-The structural refactor must not start until both ADR-0012 and this migration plan are approved. B1 and B2 may prepare modules after that approval, but no live ownership or state-address change is allowed before the atomic B3 cutover.
+B1 and B2 may prepare modules after that approval, but they must not change the active root, backend configuration, live resource ownership or state addresses. The first ownership change is the atomic B3 cutover.
 
 ## Baseline
 
