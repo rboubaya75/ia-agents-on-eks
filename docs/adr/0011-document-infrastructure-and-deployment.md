@@ -1,6 +1,6 @@
 # ADR-0011: Document infrastructure and deployment boundary
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-15
 
 ## Context
@@ -313,4 +313,4 @@ Rejected. Native Terraform AWS provider resources exist for the required S3 Vect
 3. implement the Helm chart with separate API and worker health contracts;
 4. extend GitHub Actions with infrastructure validation, exact OIDC trust, plan integrity and protected apply workflows;
 5. deploy a development environment and run positive and negative AWS integration tests;
-6. update this ADR from `Proposed` to `Accepted` only after the architecture sub-lot is approved.
+6. retain this ADR as the accepted boundary and record implementation-specific constraints in the corresponding phase documentation.
