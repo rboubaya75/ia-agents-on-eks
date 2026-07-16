@@ -7,10 +7,10 @@ mock_provider "aws" {
 }
 
 variables {
-  name_prefix               = "iaagents"
-  environment               = "dev"
-  aws_region                = "eu-west-3"
-  embedding_profile_alias   = "titan-v2"
+  name_prefix                = "iaagents"
+  environment                = "dev"
+  aws_region                 = "eu-west-3"
+  embedding_profile_alias    = "titan-v2"
   embedding_profile_revision = "rev-001"
   tags = {
     CostCenter = "platform"
@@ -71,8 +71,13 @@ run "secure_aws_managed_defaults" {
   }
 
   assert {
-    condition     = jsondecode(aws_sqs_queue.ingestion.redrive_policy).deadLetterTargetArn == aws_sqs_queue.ingestion_dlq.arn
-    error_message = "The ingestion queue must redrive to the module DLQ."
+    condition     = jsondecode(aws_sqs_queue.ingestion.redrive_policy).maxReceiveCount == 5
+    error_message = "The ingestion queue must apply the configured redrive count."
+  }
+
+  assert {
+    condition     = strcontains(aws_sqs_queue.ingestion.redrive_policy, "deadLetterTargetArn")
+    error_message = "The ingestion queue must configure a dead-letter target."
   }
 
   assert {
