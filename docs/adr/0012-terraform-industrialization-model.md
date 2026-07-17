@@ -1,7 +1,8 @@
 # ADR-0012: Terraform industrialization model
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-16
+- Accepted through PR #11 on 2026-07-16
 
 ## Context
 
@@ -313,8 +314,8 @@ Rejected. Durable documents, coordination records and vector indexes must retain
 
 ## Required follow-up
 
-1. review and approve this ADR;
-2. approve the detailed 4C-0 migration plan;
+1. ADR-0012 was reviewed and accepted through PR #11;
+2. the detailed 4C-0 migration plan was reviewed and approved through PR #11;
 3. implement B1 and B2 without changing live ownership;
 4. produce and approve the state preflight before B3;
 5. implement the atomic B3 cutover and demonstrate zero unapproved destroy or replacement actions;
